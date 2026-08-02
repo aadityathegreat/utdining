@@ -160,6 +160,17 @@ function renderNow() {
   }
   emptyEl.classList.add('hidden')
 
+  // With no energy target set, nothing divides by calories and protein is not scored at
+  // all — the picks are real but they are answering a much narrower question. Say so
+  // rather than letting them read as a full recommendation.
+  if (!(profile.targets.kcal > 0) || !(profile.targets.protein_g > 0)) {
+    const warn = document.createElement('div')
+    warn.className = 'note'
+    warn.textContent = 'Calorie and protein targets are not set, so these picks ignore both. '
+      + 'Set them in Prefs (copy from your Cronometer targets page).'
+    picksEl.append(warn)
+  }
+
   for (const p of picks) picksEl.append(renderPick(p))
 
   const kcal = Math.round(picks.reduce((a, p) => a + (p.delivers.kcal ?? 0), 0))
