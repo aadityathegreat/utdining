@@ -41,11 +41,20 @@ const GRAMS_PER_OZ = 28.3495
 
 // ---------------------------------------------------------------------------
 
-/** What is left to eat today. Nutrients with no target set are simply not scored. */
+/**
+ * What is left to eat today. Nutrients with no target set are simply not scored.
+ *
+ * A consumed value of `null` means "logged, but this figure is unavailable" — Apple
+ * Health has no added-sugars type at all, for instance. That nutrient drops out of
+ * scoring entirely rather than being read as zero consumed, which would invent a full
+ * day's budget out of missing data. A key that is simply absent means nothing has been
+ * eaten against it yet, which is a real zero.
+ */
 export function needVector(targets, consumed) {
   const need = {}
   for (const [k, target] of Object.entries(targets ?? {})) {
     if (!(target > 0)) continue
+    if (consumed && k in consumed && consumed[k] == null) continue
     need[k] = Math.max(0, target - (consumed?.[k] ?? 0))
   }
   return need

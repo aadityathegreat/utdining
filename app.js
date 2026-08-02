@@ -2,7 +2,7 @@ import {
   recommend, needVector, unservableGaps, shareForMeal, cronometerEntry,
 } from './recommend.mjs'
 import {
-  parseCronometerCsv, datesInCsv, EXTRA_LABELS, CronometerParseError,
+  parseCronometerCsv, datesInCsv, parseHealthPayload, EXTRA_LABELS, CronometerParseError,
 } from './cronometer.mjs'
 
 const PROFILE_KEY = 'utdining.profile'
@@ -360,13 +360,14 @@ function renderFuelLine() {
     return
   }
   const need = needVector(profile.targets, consumed)
-  const source = profile.consumed.source === 'csv' ? 'Cronometer' : 'typed in'
+  const source = { csv: 'Cronometer CSV', health: 'Apple Health', manual: 'typed in' }[profile.consumed.source]
+    ?? profile.consumed.source
   $('#fuelline').textContent =
     `${Math.round(need.kcal ?? 0)} cal and ${Math.round(need.protein_g ?? 0)} g protein left (${source}).`
 }
 
-function setConsumed(nutrients, source, extras) {
-  profile.consumed = { date: todayIso(), source, nutrients }
+function setConsumed(nutrients, source, extras, missing = []) {
+  profile.consumed = { date: todayIso(), source, nutrients, missing, at: new Date().toISOString() }
   if (extras) profile.extras = extras
   saveProfile()
   renderFuel()
@@ -478,6 +479,50 @@ $('#csv').onchange = async (e) => {
   }
   e.target.value = ''
 }
+
+// Apple Health import. The Shortcut does the reading and summing; this only validates
+// and stores. Clipboard access must happen inside the click handler — browsers require
+// the user gesture, and a silent read on page load is deliberately impossible.
+async function importFromText(text) {
+  const status = $('#csvstatus')
+  try {
+    const { nutrients, missing, generatedAt } = parseHealthPayload(text, todayIso())
+    setConsumed(nutrients, 'health', null, missing)
+
+    const when = generatedAt ? new Date(generatedAt) : new Date()
+    const time = Number.isNaN(when.valueOf())
+      ? ''
+      : ` at ${when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+    status.textContent = missing.length > 0
+      // Naming what is absent stops a silent Health sync failure from reading as
+      // "ate none of that today".
+      ? `Imported${time}. Not available from Health: ${missing.map((k) => NUTRIENT_LABEL[k] ?? k).join(', ')}.`
+      : `Imported${time}.`
+    status.className = 'status ok'
+    $('#pastefallback').open = false
+  } catch (err) {
+    status.textContent = err instanceof CronometerParseError ? err.message : `Import failed: ${err.message}`
+    status.className = 'status bad'
+  }
+}
+
+$('#health').onclick = async () => {
+  if (!navigator.clipboard?.readText) {
+    $('#pastefallback').open = true
+    $('#csvstatus').textContent = 'This browser will not let a page read the clipboard. Paste below.'
+    $('#csvstatus').className = 'status bad'
+    return
+  }
+  try {
+    await importFromText(await navigator.clipboard.readText())
+  } catch {
+    $('#pastefallback').open = true
+    $('#csvstatus').textContent = 'Clipboard read was refused. Paste below instead.'
+    $('#csvstatus').className = 'status bad'
+  }
+}
+
+$('#pastego').onclick = () => importFromText($('#pastebox').value)
 
 $('#savemanual').onclick = () => {
   const nutrients = { ...(consumedToday() ?? {}) }

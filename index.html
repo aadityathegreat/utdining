@@ -40,11 +40,21 @@
       Export <b>Daily Nutrition</b> from cronometer.com (Profile → Your Account → Export Data)
       and drop the file here. It is read on this phone and never uploaded.
     </p>
+    <button id="health" class="primary">Import from Shortcut</button>
+    <p class="hint">Run the <b>Cronometer Today</b> Shortcut first — it reads today's totals
+      out of Apple Health and copies them. Setup: <code>docs/SHORTCUT.md</code> in the repo.</p>
+
     <label class="drop" id="drop">
       <input type="file" id="csv" accept=".csv,text/csv" hidden>
-      <span>Choose Cronometer CSV</span>
+      <span>Or choose a Cronometer CSV</span>
     </label>
     <p id="csvstatus" class="status"></p>
+
+    <details id="pastefallback">
+      <summary class="hint">Clipboard blocked? Paste it here</summary>
+      <textarea id="pastebox" rows="4" aria-label="Shortcut output"></textarea>
+      <button id="pastego" class="ghost">Import pasted text</button>
+    </details>
 
     <h2>Or type it</h2>
     <div class="grid" id="manual"></div>

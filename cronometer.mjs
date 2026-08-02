@@ -132,3 +132,60 @@ export function datesInCsv(text) {
     .map((l) => splitCsvLine(l)[0]?.trim())
     .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d ?? ''))
 }
+
+// ---------------------------------------------------------------------------
+// Apple Health handoff
+// ---------------------------------------------------------------------------
+
+// An iOS Shortcut reads today's Cronometer samples out of Apple Health, sums them, and
+// puts this JSON on the clipboard. See docs/SHORTCUT.md.
+//
+// Clipboard rather than a URL because an installed home-screen web app has its own
+// localStorage, separate from Safari's: a Shortcut that opens the site URL lands in
+// Safari and writes to storage the installed app cannot see.
+export const HEALTH_SCHEMA = 1
+
+/**
+ * @param {string} text  clipboard contents
+ * @param {string} isoDate  today, "YYYY-MM-DD"
+ * @returns {{date, nutrients, missing, generatedAt}}
+ *
+ * Nutrients named in `missing` come back as null, never 0. Apple Health defines no
+ * added-sugars type at all, and Cronometer's sync can silently stop — in both cases a
+ * zero would read as "ate none of it" and hand the recommender a full day's budget.
+ */
+export function parseHealthPayload(text, isoDate) {
+  let data
+  try {
+    data = JSON.parse(text)
+  } catch {
+    throw new CronometerParseError('Clipboard did not contain the Shortcut output.')
+  }
+
+  if (data?.schema !== HEALTH_SCHEMA) {
+    throw new CronometerParseError('Unrecognised Shortcut output — update the Shortcut.')
+  }
+  if (data.date !== isoDate) {
+    throw new CronometerParseError(`That data is for ${data.date || 'an unknown day'}, not today.`)
+  }
+
+  const missing = Array.isArray(data.missing) ? data.missing.map(String) : []
+  const nutrients = {}
+
+  for (const [key, value] of Object.entries(data.nutrients ?? {})) {
+    if (missing.includes(key)) { nutrients[key] = null; continue }
+    const n = Number(value)
+    if (!Number.isFinite(n) || n < 0) {
+      throw new CronometerParseError(`Bad value for ${key} — check the Shortcut.`)
+    }
+    nutrients[key] = n
+  }
+
+  for (const key of missing) nutrients[key] = null
+
+  if (Object.keys(nutrients).length === 0) {
+    throw new CronometerParseError('Shortcut returned no nutrients at all.')
+  }
+
+  return { date: data.date, nutrients, missing, generatedAt: String(data.generatedAt ?? '') }
+}

@@ -180,3 +180,12 @@ button.copy {
   min-height: 40px;
   margin-bottom: 8px;
 }
+
+#pastefallback { margin-top: 12px; }
+#pastefallback summary { cursor: pointer; }
+#pastebox {
+  width: 100%;
+  margin-top: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}

@@ -158,3 +158,15 @@ test('cronometer entry marks unpublished nutrients instead of zeroing them', () 
   assert.doesNotMatch(text, /Saturated: 0g/)
   assert.match(text, /Log 1\.5 × this serving\./)
 })
+
+test('an unknown consumed value drops the nutrient instead of assuming zero eaten', () => {
+  // null means "logged today, but this figure is unavailable" — not "ate none of it".
+  const need = needVector({ kcal: 2000, addedsugar_g: 50 }, { kcal: 500, addedsugar_g: null })
+  assert.equal(need.kcal, 1500)
+  assert.ok(!('addedsugar_g' in need), 'unknown intake must not become a full budget')
+})
+
+test('an absent consumed key is still a real zero', () => {
+  const need = needVector({ kcal: 2000, fiber_g: 38 }, { kcal: 500 })
+  assert.equal(need.fiber_g, 38)
+})

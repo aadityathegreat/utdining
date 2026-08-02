@@ -5,7 +5,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { parseCronometerCsv, datesInCsv, CronometerParseError } from '../cronometer.mjs'
+import {
+  parseCronometerCsv, datesInCsv, parseHealthPayload, CronometerParseError,
+} from '../cronometer.mjs'
 import { NUTRIENT_KEYS } from '../scraper/parse.mjs'
 
 const csv = readFileSync(
@@ -54,4 +56,48 @@ test('quoted fields containing commas survive', () => {
 
 test('lists the days a file covers', () => {
   assert.deepEqual(datesInCsv(csv), ['2026-07-31', '2026-08-01', '2026-08-02'])
+})
+
+// --- Apple Health handoff ---------------------------------------------------
+
+const health = (over = {}) => JSON.stringify({
+  schema: 1,
+  date: '2026-08-02',
+  generatedAt: '2026-08-02T12:34:56-05:00',
+  nutrients: { kcal: 842.3, protein_g: 51.2, carb_g: 96.4, fat_g: 29.1 },
+  missing: [],
+  ...over,
+})
+
+test('health payload: reads today', () => {
+  const r = parseHealthPayload(health(), '2026-08-02')
+  assert.equal(r.nutrients.kcal, 842.3)
+  assert.deepEqual(r.missing, [])
+})
+
+test('health payload: missing nutrients become null, never zero', () => {
+  // Apple Health defines no added-sugars type at all. Zero here would hand the
+  // recommender a full untouched daily budget it has no evidence for.
+  const r = parseHealthPayload(health({ missing: ['addedsugar_g', 'potassium_mg'] }), '2026-08-02')
+  assert.equal(r.nutrients.addedsugar_g, null)
+  assert.equal(r.nutrients.potassium_mg, null)
+  assert.notEqual(r.nutrients.addedsugar_g, 0)
+})
+
+test('health payload: a missing nutrient wins over any value sent alongside it', () => {
+  const r = parseHealthPayload(
+    health({ nutrients: { kcal: 100, addedsugar_g: 0 }, missing: ['addedsugar_g'] }), '2026-08-02')
+  assert.equal(r.nutrients.addedsugar_g, null)
+})
+
+test('health payload: yesterday is rejected', () => {
+  assert.throws(() => parseHealthPayload(health(), '2026-08-03'), CronometerParseError)
+})
+
+test('health payload: unknown schema and junk are rejected', () => {
+  assert.throws(() => parseHealthPayload(health({ schema: 2 }), '2026-08-02'), CronometerParseError)
+  assert.throws(() => parseHealthPayload('not json', '2026-08-02'), CronometerParseError)
+  assert.throws(() => parseHealthPayload(health({ nutrients: {} }), '2026-08-02'), CronometerParseError)
+  assert.throws(
+    () => parseHealthPayload(health({ nutrients: { kcal: -5 } }), '2026-08-02'), CronometerParseError)
 })
