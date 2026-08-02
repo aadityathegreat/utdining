@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   recommend, scoreItem, needVector, isExcluded, describeServing, roundServings,
+  cronometerEntry,
 } from '../recommend.mjs'
 
 const nut = (o) => ({
@@ -111,7 +112,7 @@ test('gram honesty: no gram figure without a real weight portion', () => {
 
 test('gram honesty: weight portions do give grams', () => {
   const oz = { raw: '4 oz', qty: 4, unit: 'oz', unitClass: 'weight', grams: 113.4 }
-  assert.equal(describeServing(1.5, oz), '6 oz (~170 g)')
+  assert.equal(describeServing(1.5, oz), '1.5 servings · 6 oz (~170 g)')
 })
 
 test('servings round to something servable', () => {
@@ -134,4 +135,26 @@ test('reflux filter is off unless switched on', () => {
   const salsa = item('r*1', 'Chips & Salsa', { kcal: 200 }, { ingredients: 'Tomato, Onion, Lime' })
   assert.equal(isExcluded(salsa, PROFILE), null)
   assert.equal(isExcluded(salsa, { ...PROFILE, refluxFilter: true }), 'reflux')
+})
+
+test('serving display leads with the count, then the weight', () => {
+  const oz = { raw: '3 oz', qty: 3, unit: 'oz', unitClass: 'weight', grams: 85.0 }
+  assert.equal(describeServing(2, oz), '2 servings · 6 oz (~170 g)')
+  assert.equal(describeServing(1, oz), '1 serving · 3 oz (~85 g)')
+})
+
+test('serving display never claims a specific utensil', () => {
+  const oz = { raw: '3 oz', qty: 3, unit: 'oz', unitClass: 'weight', grams: 85.0 }
+  // UT publishes portion sizes, not which scoop is in which pan.
+  assert.doesNotMatch(describeServing(2, oz), /scoop/i)
+})
+
+test('cronometer entry marks unpublished nutrients instead of zeroing them', () => {
+  const dish = item('x*1', 'Mystery Gravy', { kcal: 90, protein_g: 2, satfat_g: null })
+  const text = cronometerEntry(dish, 1.5)
+  assert.match(text, /Serving size: 4 oz/)
+  assert.match(text, /Energy: 90kcal/)
+  assert.match(text, /Saturated: \(not published — leave blank\)/)
+  assert.doesNotMatch(text, /Saturated: 0g/)
+  assert.match(text, /Log 1\.5 × this serving\./)
 })

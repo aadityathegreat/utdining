@@ -170,3 +170,13 @@ dialog h3 { margin: 0 0 6px; }
 dialog input { width: 100%; }
 dialog menu { display: flex; gap: 8px; padding: 0; margin: 14px 0 0; }
 dialog menu button { flex: 1; width: auto; margin: 0; }
+
+button.copy {
+  width: 100%;
+  background: transparent;
+  border-style: dashed;
+  color: var(--dim);
+  font-size: 14px;
+  min-height: 40px;
+  margin-bottom: 8px;
+}

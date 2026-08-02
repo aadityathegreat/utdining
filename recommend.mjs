@@ -135,20 +135,61 @@ const COUNT_NOUN = {
  * ladles are volume scoops and never produce a gram figure.
  */
 export function describeServing(servings, portion) {
+  // Leading with the serving count is what you can act on while holding a tray; the
+  // weight follows as a cross-check and for logging. Deliberately "servings", not
+  // "scoops" — UT publishes the portion size but not which utensil is in which pan, so
+  // one-scoop-equals-one-serving is an assumption, not something the data supports.
   if (portion.unitClass === 'weight' && portion.grams != null) {
     const oz = servings * portion.qty
-    return `${trim(oz)} oz (~${roundToStep(oz * GRAMS_PER_OZ, 5)} g)`
+    const count = `${trim(servings)} ${servings === 1 ? 'serving' : 'servings'}`
+    return `${count} · ${trim(oz)} oz (~${roundToStep(oz * GRAMS_PER_OZ, 5)} g)`
   }
 
   if (portion.unitClass === 'volume') {
     const scoops = trim(servings)
-    return servings === 1 ? `1 scoop (${portion.raw})` : `${scoops} scoops (${portion.raw} each)`
+    return servings === 1 ? `1 ladle (${portion.raw})` : `${scoops} ladles (${portion.raw} each)`
   }
 
   // "1/12 pizza" x 4 servings is four slices, not "4 x 1/12 pizza".
   const units = portion.unit === 'pizza' ? servings : servings * portion.qty
   const [one, many] = COUNT_NOUN[portion.unit] ?? ['serving', 'servings']
   return `${trim(units)} ${units === 1 ? one : many}`
+}
+
+const CRONOMETER_ROWS = [
+  ['Energy', 'kcal', 'kcal'], ['Protein', 'protein_g', 'g'], ['Carbs', 'carb_g', 'g'],
+  ['Fat', 'fat_g', 'g'], ['Saturated', 'satfat_g', 'g'], ['Trans-Fats', 'transfat_g', 'g'],
+  ['Cholesterol', 'chol_mg', 'mg'], ['Sodium', 'sodium_mg', 'mg'], ['Fiber', 'fiber_g', 'g'],
+  ['Sugars', 'sugar_g', 'g'], ['Added Sugars', 'addedsugar_g', 'g'],
+  ['Vitamin D', 'vitd_mcg', 'mcg'], ['Calcium', 'calcium_mg', 'mg'], ['Iron', 'iron_mg', 'mg'],
+  ['Potassium', 'potassium_mg', 'mg'],
+]
+
+/**
+ * Text for Cronometer's "Create a Custom Food" form.
+ *
+ * Cronometer has no public API and does not accept diary imports, so nothing can be
+ * pushed into it. What works is creating the dish once as a custom food — the values
+ * below are PER SERVING for exactly that reason, so the entry stays reusable and only
+ * the quantity changes each time.
+ *
+ * Nutrients UT does not publish are marked, not zeroed: entering 0 would tell Cronometer
+ * something false and quietly skew every daily total afterwards.
+ */
+export function cronometerEntry(item, servings) {
+  const n = item.nutrients
+  const lines = CRONOMETER_ROWS.map(([label, key, unit]) =>
+    `${label}: ${n[key] == null ? '(not published — leave blank)' : `${n[key]}${unit}`}`)
+
+  return [
+    `${item.name} (UT ${item.station ?? 'dining'})`,
+    `Serving size: ${item.portion.raw}`,
+    '',
+    'Per serving:',
+    ...lines,
+    '',
+    `Log ${trim(servings)} × this serving.`,
+  ].join('\n')
 }
 
 /**

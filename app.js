@@ -1,4 +1,6 @@
-import { recommend, needVector, unservableGaps, shareForMeal } from './recommend.mjs'
+import {
+  recommend, needVector, unservableGaps, shareForMeal, cronometerEntry,
+} from './recommend.mjs'
 import {
   parseCronometerCsv, datesInCsv, EXTRA_LABELS, CronometerParseError,
 } from './cronometer.mjs'
@@ -210,6 +212,23 @@ function renderPick(p) {
     caveat.textContent = `UT doesn't publish ${names} for this — scored without it.`
     el.append(caveat)
   }
+
+  // Cronometer cannot be written to, so the best available move is handing over exactly
+  // what its custom-food form asks for. Created once per dish, reused forever after.
+  const copy = document.createElement('button')
+  copy.className = 'copy'
+  copy.textContent = 'Copy for Cronometer'
+  copy.onclick = async () => {
+    const item = { ...menu.items[p.itemId], name: p.name, station: p.station }
+    try {
+      await navigator.clipboard.writeText(cronometerEntry(item, p.servings))
+      copy.textContent = 'Copied — paste into Custom Food'
+    } catch {
+      copy.textContent = 'Clipboard blocked — open Prefs to copy manually'
+    }
+    setTimeout(() => { copy.textContent = 'Copy for Cronometer' }, 3000)
+  }
+  el.append(copy)
 
   const rateRow = document.createElement('div')
   rateRow.className = 'rate'

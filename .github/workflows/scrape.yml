@@ -1,0 +1,40 @@
+name: scrape menus
+
+on:
+  schedule:
+    # 10:00 UTC = 5am Central. The menu for the day is up well before breakfast.
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The parser is the thing most likely to break when UT edits its HTML, so it is
+      # checked before it is allowed to overwrite good data.
+      - name: Test
+        run: node --test 'test/*.test.mjs'
+
+      - name: Scrape
+        run: node scraper/scrape.mjs
+
+      - name: Commit
+        run: |
+          git config user.name "utdining-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/
+          git diff --staged --quiet || git commit -m "menus $(date -u +%Y-%m-%d)"
+          git push
