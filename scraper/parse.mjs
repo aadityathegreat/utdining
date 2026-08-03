@@ -181,6 +181,12 @@ const MENU_TOKEN = new RegExp(
   'g',
 )
 
+// FoodPro's RecNumAndPort is a recipe number, a `*`, and a port count (occasionally a
+// fraction like `1/12`). Every id observed in the wild matches this. Anything else —
+// including something like `__proto__`, which would otherwise be used as a bracket-notation
+// object key downstream — is rejected here rather than trusted further.
+const ITEM_ID_RE = /^[0-9]+\*[0-9]+(?:\/[0-9]+)?$/
+
 export function parseLongMenu(html) {
   const items = []
   let station = null
@@ -194,8 +200,15 @@ export function parseLongMenu(html) {
       station = clean(category).replace(/^-+\s*|\s*-+$/g, '')
       pending = null
     } else if (recNum !== undefined) {
+      const itemId = decodeURIComponent(recNum)
+      if (!ITEM_ID_RE.test(itemId)) {
+        // Drop loudly: this row is skipped, not silently fed to downstream keying.
+        console.warn(`  skip menu row with malformed id: ${JSON.stringify(itemId)} (${clean(itemName)})`)
+        pending = null
+        continue
+      }
       pending = {
-        itemId: decodeURIComponent(recNum),
+        itemId,
         name: clean(itemName),
         station: station ?? 'Other',
         icons: [],

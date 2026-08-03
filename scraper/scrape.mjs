@@ -56,11 +56,19 @@ function labelUrl(hall, date, itemId) {
 }
 
 function readCache() {
+  let raw
   try {
-    return JSON.parse(readFileSync(`${dataDir}labels.json`, 'utf8'))
+    raw = JSON.parse(readFileSync(`${dataDir}labels.json`, 'utf8'))
   } catch {
-    return {}
+    raw = {}
   }
+  // Object.create(null) has no `__proto__` setter, so a cached (or freshly scraped)
+  // itemId of "__proto__" becomes an ordinary own property instead of silently
+  // reassigning the object's prototype. JSON.stringify serializes it identically to a
+  // plain object, so labels.json's shape is unchanged.
+  const labels = Object.create(null)
+  for (const key of Object.keys(raw)) labels[key] = raw[key]
+  return labels
 }
 
 async function main() {
@@ -76,7 +84,9 @@ async function main() {
   console.log(`halls: ${halls.map((h) => h.name).join(', ')}`)
 
   const dates = menuDates()
-  const out = { generatedAt: new Date().toISOString(), halls: [], items: {} }
+  // items is keyed by scraped itemId with bracket notation below, so it must not be a
+  // plain object — see the comment on readCache().
+  const out = { generatedAt: new Date().toISOString(), halls: [], items: Object.create(null) }
   const seen = new Set()
   let labelFailures = 0
   let unpublished = 0
