@@ -638,6 +638,56 @@ function renderPrefs() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Settings backup
+// ---------------------------------------------------------------------------
+
+// Everything worth keeping, and nothing about a particular day. Intake and the food log are
+// deliberately excluded: they are tomorrow's noise, and a backup that carries what he ate is
+// a more personal thing to paste into Notes than a list of targets.
+const SETTINGS_KEYS = [
+  'targets', 'extraTargets', 'restrictions', 'refluxFilter', 'ingredientBlocklist',
+  'itemWeights', 'penaltyWeightOverrides',
+]
+
+function settingsBlob() {
+  const out = { version: DEFAULT_PROFILE.version }
+  for (const key of SETTINGS_KEYS) out[key] = profile[key]
+  return JSON.stringify(out)
+}
+
+/** @throws {Error} with a message fit to show the user */
+function restoreSettings(text) {
+  let data
+  try {
+    data = JSON.parse(text)
+  } catch {
+    throw new Error('That is not a settings backup — paste the whole thing, braces included.')
+  }
+  if (data?.version !== DEFAULT_PROFILE.version) {
+    throw new Error('That backup came from a different version of the app.')
+  }
+
+  // Only known keys are copied, and each is type-checked against its default. A backup is
+  // pasted text: a stray key would otherwise land straight in the profile.
+  let restored = 0
+  for (const key of SETTINGS_KEYS) {
+    const value = data[key]
+    if (value == null) continue
+    if (Array.isArray(DEFAULT_PROFILE[key]) !== Array.isArray(value)) continue
+    if (typeof DEFAULT_PROFILE[key] !== typeof value) continue
+    profile[key] = value
+    restored++
+  }
+  if (restored === 0) throw new Error('Nothing in that backup was recognisable.')
+
+  saveProfile()
+  renderPrefs()
+  renderFuel()
+  renderNow()
+  return restored
+}
+
 function chip(text, on, onclick) {
   const b = document.createElement('button')
   b.className = on ? 'chip on' : 'chip'
@@ -773,6 +823,34 @@ $('#addblock').onsubmit = (e) => {
   saveProfile(); renderPrefs(); renderNow()
 }
 
+$('#copysettings').onclick = async () => {
+  const status = $('#backupstatus')
+  try {
+    await navigator.clipboard.writeText(settingsBlob())
+    status.textContent = 'Copied. Paste it into Notes — that is your restore point.'
+    status.className = 'status ok'
+  } catch {
+    // Same clipboard restriction as the Shortcut import: show the text so it can be
+    // selected by hand rather than pretending the copy worked.
+    $('#restorebox').open = true
+    $('#restoretext').value = settingsBlob()
+    status.textContent = 'Clipboard blocked — select the text below and copy it manually.'
+    status.className = 'status bad'
+  }
+}
+
+$('#restorego').onclick = () => {
+  const status = $('#backupstatus')
+  try {
+    const restored = restoreSettings($('#restoretext').value)
+    status.textContent = `Restored ${restored} setting group(s).`
+    status.className = 'status ok'
+  } catch (err) {
+    status.textContent = err.message
+    status.className = 'status bad'
+  }
+}
+
 $('#reset').onclick = () => {
   if (!confirm('Clear targets, ratings and blocked ingredients on this phone?')) return
   localStorage.removeItem(PROFILE_KEY)
@@ -842,5 +920,11 @@ async function start() {
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => { /* offline cache is a bonus */ })
 }
+
+// Asks the browser not to evict this app's storage. iOS prunes script-writable storage for
+// sites it has not seen in about a week, which reads as "the app forgot my targets again".
+// Safari grants this to installed home-screen apps and quietly declines elsewhere; either
+// way the Backup section in Prefs is the real safety net.
+navigator.storage?.persist?.().catch(() => { /* declined is fine, nothing depends on it */ })
 
 start()

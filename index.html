@@ -99,6 +99,18 @@
     <h2>Rated foods</h2>
     <div id="rated"></div>
 
+    <h2>Backup</h2>
+    <p class="hint">Targets, filters and ratings live only on this phone. iOS clears storage
+      for sites it has not seen in a while, and the home-screen app and Safari keep separate
+      copies — so keep this text somewhere you can paste it back from.</p>
+    <button id="copysettings" class="ghost">Copy my settings</button>
+    <details id="restorebox">
+      <summary class="hint">Restore from a backup</summary>
+      <textarea id="restoretext" rows="4" aria-label="Settings backup"></textarea>
+      <button id="restorego" class="ghost">Restore these settings</button>
+    </details>
+    <p id="backupstatus" class="status"></p>
+
     <h2 class="danger-h">Reset</h2>
     <button id="reset" class="ghost">Clear everything on this phone</button>
   </section>
