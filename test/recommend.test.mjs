@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   recommend, scoreItem, needVector, isExcluded, describeServing, roundServings,
-  cronometerEntry,
+  cronometerEntry, deliversFor, mergeConsumed,
 } from '../recommend.mjs'
 
 const nut = (o) => ({
@@ -169,4 +169,33 @@ test('an unknown consumed value drops the nutrient instead of assuming zero eate
 test('an absent consumed key is still a real zero', () => {
   const need = needVector({ kcal: 2000, fiber_g: 38 }, { kcal: 500 })
   assert.equal(need.fiber_g, 38)
+})
+
+test('deliversFor scales published nutrients and drops unpublished ones', () => {
+  const delivered = deliversFor({ kcal: 200, protein_g: 12, sodium_mg: null }, 1.5)
+  assert.equal(delivered.kcal, 300)
+  assert.equal(delivered.protein_g, 18)
+  assert.equal('sodium_mg' in delivered, false, 'an unpublished nutrient must not become 0')
+})
+
+test('mergeConsumed adds a logged dish to the imported baseline', () => {
+  const merged = mergeConsumed({ kcal: 800, protein_g: 50 }, { kcal: 300, protein_g: 18 })
+  assert.deepEqual(merged, { kcal: 1100, protein_g: 68 })
+})
+
+test('mergeConsumed keeps an unavailable baseline figure unavailable', () => {
+  // Apple Health has no added-sugars type at all. A logged dish adding to it would turn
+  // "unknown" into a number, and needVector would then hand out a budget for it.
+  const merged = mergeConsumed({ kcal: 800, addedsugar_g: null }, { kcal: 300, addedsugar_g: 9 })
+  assert.equal(merged.addedsugar_g, null)
+  assert.equal(needVector({ addedsugar_g: 50 }, merged).addedsugar_g, undefined)
+})
+
+test('mergeConsumed counts a nutrient the baseline never mentioned', () => {
+  const merged = mergeConsumed({ kcal: 800 }, { fiber_g: 6 })
+  assert.equal(merged.fiber_g, 6)
+})
+
+test('mergeConsumed with no baseline is the log alone', () => {
+  assert.deepEqual(mergeConsumed(null, { kcal: 300 }), { kcal: 300 })
 })

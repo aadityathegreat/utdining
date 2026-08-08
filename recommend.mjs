@@ -165,6 +165,43 @@ export function describeServing(servings, portion) {
   return `${trim(units)} ${units === 1 ? one : many}`
 }
 
+/**
+ * What a given number of servings actually delivers.
+ *
+ * Unpublished nutrients are dropped rather than zeroed, and the distinction survives into
+ * the day's running total: a dish with no published sodium must not make the day's sodium
+ * look lower than it is.
+ */
+export function deliversFor(nutrients, servings) {
+  return Object.fromEntries(
+    Object.entries(nutrients ?? {})
+      .filter(([, v]) => v != null)
+      .map(([k, v]) => [k, v * servings]),
+  )
+}
+
+/**
+ * The day's intake as the recommender should see it: an imported baseline plus whatever
+ * was logged in the app since.
+ *
+ * A baseline nutrient of `null` means "logged today, figure unavailable" — Apple Health
+ * publishes no added-sugars type at all. It STAYS null even when a logged dish would add
+ * to it, because a partial figure read as a total invents budget out of missing data.
+ * `needVector` then drops that nutrient from scoring, which is the honest outcome.
+ *
+ * A nutrient absent from the baseline but present in the log is a real number: nothing was
+ * eaten against it before, and now something was.
+ */
+export function mergeConsumed(baseline, logged) {
+  if (!baseline) return { ...(logged ?? {}) }
+  const out = { ...baseline }
+  for (const [k, v] of Object.entries(logged ?? {})) {
+    if (k in out && out[k] == null) continue
+    out[k] = (out[k] ?? 0) + v
+  }
+  return out
+}
+
 const CRONOMETER_ROWS = [
   ['Energy', 'kcal', 'kcal'], ['Protein', 'protein_g', 'g'], ['Carbs', 'carb_g', 'g'],
   ['Fat', 'fat_g', 'g'], ['Saturated', 'satfat_g', 'g'], ['Trans-Fats', 'transfat_g', 'g'],
@@ -292,9 +329,7 @@ export function recommend(items, need, profile, options = {}) {
       display: describeServing(servings, item.portion),
       why: explain(item, servings, remaining),
       unknownNutrients: unknown,
-      delivers: Object.fromEntries(
-        Object.entries(n).filter(([, v]) => v != null).map(([k, v]) => [k, v * servings]),
-      ),
+      delivers: deliversFor(n, servings),
     })
 
     for (const k of Object.keys(remaining)) {

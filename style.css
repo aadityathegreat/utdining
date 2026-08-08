@@ -106,6 +106,36 @@ h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: v
 .rate button { flex: 1; background: transparent; }
 .rate button.on { border-color: var(--accent); color: var(--accent); }
 
+/* One big button for the amount you were told, multipliers beside it for anything else.
+   button.primary is full-width by default, which has to be undone inside this row. */
+.ate { display: flex; gap: 8px; align-items: stretch; margin-top: 12px; margin-bottom: 10px; }
+.ate button.primary { width: auto; flex: 1; margin-top: 0; }
+.ate .chip { min-width: 54px; text-align: center; }
+
+/* Feedback without leaving the Now tab — logging a whole tray is several taps in a row. */
+.logstrip {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+.logstrip span { flex: 1; }
+.logstrip button.ghost { width: auto; padding: 6px 12px; }
+
+.logrow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.logrow span { flex: 1; }
+.logrow button.ghost { width: auto; padding: 6px 12px; }
+
+#logsearch { width: 100%; }
+
 .total {
   border: 1px dashed var(--line);
   border-radius: var(--radius);

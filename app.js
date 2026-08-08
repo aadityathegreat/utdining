@@ -1,5 +1,6 @@
 import {
   recommend, needVector, unservableGaps, shareForMeal, cronometerEntry,
+  deliversFor, mergeConsumed, describeServing,
 } from './recommend.mjs'
 import {
   parseCronometerCsv, datesInCsv, parseHealthPayload, EXTRA_LABELS, CronometerParseError,
@@ -41,6 +42,9 @@ const DEFAULT_PROFILE = {
   penaltyWeightOverrides: {},
   consumed: null,
   extras: null,
+  // What was eaten straight from the app, kept separate from the imported baseline so the
+  // two can never be confused for each other. See logToday().
+  log: null,
 }
 
 const NUTRIENT_LABEL = {
@@ -96,10 +100,78 @@ function mealsLeftToday() {
   return i === -1 ? 1 : meals.length - i
 }
 
-/** Today's consumed figures, or null if the saved ones are from another day.
- *  Recommending against yesterday's intake is worse than recommending against nothing. */
-function consumedToday() {
+/** The imported figures for today (Health, CSV or typed), or null if they are from another
+ *  day. Recommending against yesterday's intake is worse than recommending against
+ *  nothing. This is the BASELINE only — it excludes anything logged in the app. */
+function baselineToday() {
   return profile.consumed?.date === todayIso() ? profile.consumed.nutrients : null
+}
+
+/** Dishes logged in the app today. A log from another day is not today's intake. */
+function logToday() {
+  return profile.log?.date === todayIso() ? profile.log.entries : []
+}
+
+function loggedTotals() {
+  const total = {}
+  for (const entry of logToday()) {
+    for (const [k, v] of Object.entries(entry.nutrients)) total[k] = (total[k] ?? 0) + v
+  }
+  return total
+}
+
+/** What the recommender scores against: the imported baseline plus what the app logged. */
+function consumedToday() {
+  const baseline = baselineToday()
+  if (!baseline && logToday().length === 0) return null
+  return mergeConsumed(baseline, loggedTotals())
+}
+
+/**
+ * Records a dish as eaten. Servings are stored as taken, unrounded — half a burger is a
+ * real thing to have eaten even though the recommender would never advise "0.5 pieces".
+ *
+ * The nutrient figures are snapshotted rather than recomputed from menu.json later: the
+ * scrape rolls the menu window forward daily and an item can drop out of it while still
+ * sitting in today's log.
+ */
+function logAte(itemId, servings) {
+  const item = menu?.items[itemId]
+  if (!item || !(servings > 0)) return
+  if (profile.log?.date !== todayIso()) profile.log = { date: todayIso(), entries: [] }
+
+  profile.log.entries.push({
+    itemId,
+    name: item.name,
+    servings,
+    display: describeServing(servings, item.portion),
+    nutrients: deliversFor(item.nutrients, servings),
+    at: new Date().toISOString(),
+  })
+  saveProfile()
+
+  // Deliberately not re-rendering the picks: logging one dish changes what is left, and a
+  // list that reshuffles under your thumb while you are logging the rest of the tray is
+  // worse than a list that is one dish stale. It refreshes on tab or meal change.
+  renderFuel()
+  renderLogStrip()
+}
+
+function removeLogEntry(index) {
+  const entries = logToday()
+  if (!entries[index]) return
+  entries.splice(index, 1)
+  saveProfile()
+  renderFuel()
+  renderLogStrip()
+}
+
+/** Briefly confirms on the button itself — a toast is easy to miss one-handed. */
+function flash(button, text) {
+  const original = button.textContent
+  button.textContent = text
+  button.disabled = true
+  setTimeout(() => { button.textContent = original; button.disabled = false }, 1200)
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +258,32 @@ function renderNow() {
   picksEl.append(total)
 }
 
+/** Running total for the Now tab, so logging a tray gives feedback without a tab switch. */
+function renderLogStrip() {
+  const strip = $('#logstrip')
+  const entries = logToday()
+  if (entries.length === 0) {
+    strip.classList.add('hidden')
+    strip.innerHTML = ''
+    return
+  }
+
+  const totals = loggedTotals()
+  const text = document.createElement('span')
+  text.textContent =
+    `Logged here today: ${entries.length} ${entries.length === 1 ? 'dish' : 'dishes'} · ` +
+    `${Math.round(totals.kcal ?? 0)} cal · ${Math.round(totals.protein_g ?? 0)} g protein`
+
+  const undo = document.createElement('button')
+  undo.className = 'ghost'
+  undo.textContent = `Undo ${entries[entries.length - 1].name}`
+  undo.onclick = () => removeLogEntry(entries.length - 1)
+
+  strip.innerHTML = ''
+  strip.append(text, undo)
+  strip.classList.remove('hidden')
+}
+
 function renderPick(p) {
   const el = document.createElement('div')
   el.className = 'pick'
@@ -229,6 +327,25 @@ function renderPick(p) {
     setTimeout(() => { copy.textContent = 'Copy for Cronometer' }, 3000)
   }
   el.append(copy)
+
+  // One tap for the ordinary case, one more for a different amount. Multipliers rather
+  // than a number field because at a buffet line you know "about half that", not grams.
+  const ateRow = document.createElement('div')
+  ateRow.className = 'ate'
+  const ate = document.createElement('button')
+  ate.className = 'primary'
+  ate.textContent = 'Ate it'
+  ate.onclick = () => { logAte(p.itemId, p.servings); flash(ate, 'Logged ✓') }
+  ateRow.append(ate)
+  for (const [mult, label] of [[0.5, '½'], [1.5, '1½'], [2, '2']]) {
+    const b = document.createElement('button')
+    b.className = 'chip'
+    b.textContent = `×${label}`
+    b.setAttribute('aria-label', `Ate ${label} times the suggested amount`)
+    b.onclick = () => { logAte(p.itemId, p.servings * mult); flash(b, '✓') }
+    ateRow.append(b)
+  }
+  el.append(ateRow)
 
   const rateRow = document.createElement('div')
   rateRow.className = 'rate'
@@ -310,7 +427,9 @@ function applyNote(item, note, disliked) {
 
 function renderFuel() {
   const manual = $('#manual')
-  const consumed = consumedToday() ?? {}
+  // Prefilled from the baseline alone, never the merged total. These inputs write back into
+  // the baseline, so showing app-logged dishes here would fold them in and count them twice.
+  const consumed = baselineToday() ?? {}
   manual.innerHTML = ''
   for (const key of ['kcal', 'protein_g', 'carb_g', 'fat_g']) {
     const label = document.createElement('label')
@@ -330,8 +449,78 @@ function renderFuel() {
     tr.insertCell().textContent = Math.round(left * 10) / 10
   }
 
+  renderLog()
+  renderLogSearch()
   renderUnservable()
   renderFuelLine()
+}
+
+function renderLog() {
+  const box = $('#loglist')
+  const entries = logToday()
+  box.innerHTML = ''
+
+  if (entries.length === 0) {
+    box.innerHTML = '<p class="hint">Nothing logged in the app today.</p>'
+    $('#clearlog').classList.add('hidden')
+    return
+  }
+
+  for (const [i, entry] of entries.entries()) {
+    const row = document.createElement('div')
+    row.className = 'logrow'
+    const text = document.createElement('span')
+    text.textContent =
+      `${entry.name} — ${entry.display} · ${Math.round(entry.nutrients.kcal ?? 0)} cal, ` +
+      `${Math.round(entry.nutrients.protein_g ?? 0)} g protein`
+    const remove = document.createElement('button')
+    remove.className = 'ghost'
+    remove.textContent = '✕'
+    remove.setAttribute('aria-label', `Remove ${entry.name}`)
+    remove.onclick = () => removeLogEntry(i)
+    row.append(text, remove)
+    box.append(row)
+  }
+
+  const totals = loggedTotals()
+  const sum = document.createElement('p')
+  sum.className = 'total'
+  sum.textContent =
+    `${Math.round(totals.kcal ?? 0)} cal, ${Math.round(totals.protein_g ?? 0)} g protein ` +
+    'logged here, on top of whatever was imported.'
+  box.append(sum)
+  $('#clearlog').classList.remove('hidden')
+}
+
+/** Logging something the recommender never suggested — a second helping, or dessert. */
+function renderLogSearch() {
+  const box = $('#logresults')
+  box.innerHTML = ''
+  const term = $('#logsearch').value.trim().toLowerCase()
+  if (term.length < 2 || !menu) return
+
+  // Everything on today's menu at this hall, not just the selected meal: breakfast gets
+  // logged at lunchtime more often than not.
+  const day = currentHall()?.days.find((d) => d.date === todayIso())
+  const ids = new Set((day?.meals ?? []).flatMap((m) => m.stations.flatMap((s) => s.itemIds)))
+
+  const matches = [...ids]
+    .map((id) => (menu.items[id] ? { itemId: id, ...menu.items[id] } : null))
+    .filter((it) => it?.name.toLowerCase().includes(term))
+    .slice(0, 8)
+
+  if (matches.length === 0) {
+    box.innerHTML = '<p class="hint">Nothing on today\'s menu matches.</p>'
+    return
+  }
+
+  for (const item of matches) {
+    const b = document.createElement('button')
+    b.className = 'chip'
+    b.textContent = `${item.name} (${item.portion.raw})`
+    b.onclick = () => { logAte(item.itemId, 1); flash(b, 'Logged ✓') }
+    box.append(b)
+  }
 }
 
 // The honest half of the micronutrient promise: Cronometer knows about these, and the
@@ -360,18 +549,35 @@ function renderFuelLine() {
     return
   }
   const need = needVector(profile.targets, consumed)
-  const source = { csv: 'Cronometer CSV', health: 'Apple Health', manual: 'typed in' }[profile.consumed.source]
-    ?? profile.consumed.source
+
+  // Both sources are named because they can double-count: if a logged dish is later typed
+  // into Cronometer by hand, the next import contains it too. Naming them makes that
+  // visible instead of silently inflating the day.
+  const parts = []
+  if (baselineToday()) {
+    parts.push({ csv: 'Cronometer CSV', health: 'Apple Health', manual: 'typed in' }[profile.consumed.source]
+      ?? profile.consumed.source)
+  }
+  const logged = logToday().length
+  if (logged > 0) parts.push(`${logged} logged here`)
+
   $('#fuelline').textContent =
-    `${Math.round(need.kcal ?? 0)} cal and ${Math.round(need.protein_g ?? 0)} g protein left (${source}).`
+    `${Math.round(need.kcal ?? 0)} cal and ${Math.round(need.protein_g ?? 0)} g protein left ` +
+    `(${parts.join(' + ')}).`
 }
 
+// An import replaces the baseline and deliberately LEAVES the app's own log alone. The
+// tempting rule — "a newer import supersedes what we logged" — is wrong here: Cronometer
+// only contains what was typed into Cronometer, so a dish logged in this app is absent from
+// every later Health import. Clearing on import would delete real intake. Emptying the log
+// is a manual choice, and the button that does it says why.
 function setConsumed(nutrients, source, extras, missing = []) {
   profile.consumed = { date: todayIso(), source, nutrients, missing, at: new Date().toISOString() }
   if (extras) profile.extras = extras
   saveProfile()
   renderFuel()
   renderNow()
+  renderLogStrip()
 }
 
 // ---------------------------------------------------------------------------
@@ -450,7 +656,21 @@ for (const tab of document.querySelectorAll('.tabs button')) {
     for (const p of document.querySelectorAll('.tabpanel')) {
       p.classList.toggle('on', p.id === tab.dataset.tab)
     }
+    // Logging leaves the picks one dish stale on purpose (see logAte); coming back to the
+    // tab is the natural moment to catch them up.
+    if (tab.dataset.tab === 'now' && menu) renderNow()
   }
+}
+
+$('#logsearch').oninput = renderLogSearch
+
+$('#clearlog').onclick = () => {
+  if (!confirm('Clear what you logged in the app today? Do this once it is in Cronometer.')) return
+  profile.log = null
+  saveProfile()
+  renderFuel()
+  renderLogStrip()
+  renderNow()
 }
 
 $('#hall').onchange = () => { populateMeals(); renderNow() }
@@ -525,7 +745,9 @@ $('#health').onclick = async () => {
 $('#pastego').onclick = () => importFromText($('#pastebox').value)
 
 $('#savemanual').onclick = () => {
-  const nutrients = { ...(consumedToday() ?? {}) }
+  // Baseline, not the merged total — see renderFuel(). Typing over a merged figure would
+  // bake the app's own log into the baseline and then count it a second time.
+  const nutrients = { ...(baselineToday() ?? {}) }
   for (const key of ['kcal', 'protein_g', 'carb_g', 'fat_g']) {
     const v = Number($(`#m_${key}`).value)
     nutrients[key] = Number.isFinite(v) && v > 0 ? v : 0
@@ -614,6 +836,7 @@ async function start() {
   populateMeals()
   renderPrefs()
   renderNow()
+  renderLogStrip()
 }
 
 if ('serviceWorker' in navigator) {

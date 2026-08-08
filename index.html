@@ -31,11 +31,22 @@
 
 <main>
   <section id="now" class="tabpanel on">
+    <div id="logstrip" class="logstrip hidden"></div>
     <div id="picks"></div>
     <p id="nowempty" class="empty hidden"></p>
   </section>
 
   <section id="fuel" class="tabpanel">
+    <h2>Logged in the app</h2>
+    <p class="hint">Tap <b>Ate it</b> on a pick and it lands here. This is added on top of
+      whatever you import below — Cronometer never sees it unless you type it in yourself.</p>
+    <div id="loglist"></div>
+    <button id="clearlog" class="ghost hidden">Clear — I've entered these in Cronometer</button>
+
+    <h2>Log something else</h2>
+    <input id="logsearch" placeholder="chicken" aria-label="Find a dish on today's menu">
+    <div class="chips" id="logresults"></div>
+
     <h2>What you've eaten today</h2>
     <p class="hint">
       Export <b>Daily Nutrition</b> from cronometer.com (Profile → Your Account → Export Data)
