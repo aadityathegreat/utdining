@@ -31,6 +31,12 @@ jobs:
       - name: Scrape
         run: node scraper/scrape.mjs
 
+      # Informational only: probes for halls we don't know the locationNum of yet
+      # (JCL). Never allowed to fail the workflow or block the real scrape's commit.
+      - name: Discover locations
+        run: node scraper/discover.mjs
+        continue-on-error: true
+
       - name: Commit
         run: |
           git config user.name "utdining-bot"
