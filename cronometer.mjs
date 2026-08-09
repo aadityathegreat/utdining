@@ -145,6 +145,63 @@ export function datesInCsv(text) {
 // Safari and writes to storage the installed app cannot see.
 export const HEALTH_SCHEMA = 1
 
+// ---------------------------------------------------------------------------
+// Export, for entering a week of dining-hall food into Cronometer by hand or by bot
+// ---------------------------------------------------------------------------
+
+export const EXPORT_SCHEMA = 1
+
+/**
+ * A week of app-logged dishes, shaped for whoever has to type them into Cronometer.
+ *
+ * Per-serving figures and the raw portion string are both included because that is exactly
+ * what Cronometer's "Create a Custom Food" form asks for: the food is created once from the
+ * per-serving values, and each day's entry only changes the quantity. Day totals are included
+ * as a cross-check so a mis-typed quantity is catchable without re-deriving it.
+ *
+ * Unpublished nutrients stay absent rather than becoming 0 — entering a zero would tell
+ * Cronometer something false and skew every daily total afterwards.
+ *
+ * @param {{date: string, entries: object[]}|null} today  the live log
+ * @param {Record<string, object[]>} history  archived days, keyed by ISO date
+ * @param {string} todayIso
+ * @param {number} days  how many days back to include, today counting as one
+ */
+export function weekLogPayload(today, history, todayIso, days = 7) {
+  const byDate = { ...(history ?? {}) }
+  if (today?.date && Array.isArray(today.entries)) byDate[today.date] = today.entries
+
+  const cutoff = new Date(`${todayIso}T00:00:00Z`)
+  cutoff.setUTCDate(cutoff.getUTCDate() - (days - 1))
+  const from = cutoff.toISOString().slice(0, 10)
+
+  const out = []
+  for (const date of Object.keys(byDate).sort()) {
+    if (date < from || date > todayIso) continue
+    const entries = byDate[date] ?? []
+    if (entries.length === 0) continue
+
+    out.push({
+      date,
+      entries: entries.map((e) => ({
+        name: e.name,
+        station: e.station ?? null,
+        portion: e.portion ?? null,
+        servings: e.servings,
+        // Older entries predate the per-serving snapshot; dividing back out is exact for
+        // every figure that was published, and a dropped nutrient stays dropped.
+        perServing: e.perServing ?? Object.fromEntries(
+          Object.entries(e.nutrients ?? {}).map(([k, v]) => [k, v / e.servings]),
+        ),
+        total: e.nutrients ?? {},
+        at: e.at ?? null,
+      })),
+    })
+  }
+
+  return { schema: EXPORT_SCHEMA, exportedFor: todayIso, days: out }
+}
+
 /**
  * @param {string} text  clipboard contents
  * @param {string} isoDate  today, "YYYY-MM-DD"

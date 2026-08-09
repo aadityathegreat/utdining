@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  parseCronometerCsv, datesInCsv, parseHealthPayload, CronometerParseError,
+  parseCronometerCsv, datesInCsv, parseHealthPayload, CronometerParseError, weekLogPayload,
 } from '../cronometer.mjs'
 import { NUTRIENT_KEYS } from '../scraper/parse.mjs'
 
@@ -100,4 +100,57 @@ test('health payload: unknown schema and junk are rejected', () => {
   assert.throws(() => parseHealthPayload(health({ nutrients: {} }), '2026-08-02'), CronometerParseError)
   assert.throws(
     () => parseHealthPayload(health({ nutrients: { kcal: -5 } }), '2026-08-02'), CronometerParseError)
+})
+
+// ---------------------------------------------------------------------------
+// Export for Cronometer transcription
+// ---------------------------------------------------------------------------
+
+const entry = (o) => ({
+  itemId: '1', name: 'Halal Grilled Chicken', station: 'The Texas Grill', servings: 2,
+  portion: '1 each', perServing: { kcal: 146, protein_g: 22.4 },
+  nutrients: { kcal: 292, protein_g: 44.8 }, at: '2026-08-08T17:30:00.000Z', ...o,
+})
+
+test('the week payload merges today with archived days, oldest first', () => {
+  const p = weekLogPayload(
+    { date: '2026-08-09', entries: [entry({ name: 'Baked Potato' })] },
+    { '2026-08-07': [entry()], '2026-08-08': [entry()] },
+    '2026-08-09',
+  )
+  assert.deepEqual(p.days.map((d) => d.date), ['2026-08-07', '2026-08-08', '2026-08-09'])
+  assert.equal(p.days[2].entries[0].name, 'Baked Potato')
+})
+
+test('the week payload drops days outside the window', () => {
+  const p = weekLogPayload(null, { '2026-07-01': [entry()], '2026-08-08': [entry()] }, '2026-08-09')
+  assert.deepEqual(p.days.map((d) => d.date), ['2026-08-08'])
+})
+
+test('the week payload carries what a custom food needs', () => {
+  const [day] = weekLogPayload({ date: '2026-08-09', entries: [entry()] }, {}, '2026-08-09').days
+  const e = day.entries[0]
+  assert.equal(e.portion, '1 each')
+  assert.equal(e.perServing.protein_g, 22.4, 'per-serving figures create the food once')
+  assert.equal(e.servings, 2, 'servings is the only thing that changes per entry')
+  assert.equal(e.total.protein_g, 44.8, 'the day total is the cross-check')
+  assert.equal(e.station, 'The Texas Grill')
+})
+
+test('an entry logged before per-serving figures existed still exports them', () => {
+  const old = { name: 'Black Beans', servings: 4, nutrients: { kcal: 208 } }
+  const [day] = weekLogPayload({ date: '2026-08-09', entries: [old] }, {}, '2026-08-09').days
+  assert.equal(day.entries[0].perServing.kcal, 52)
+  assert.equal(day.entries[0].portion, null)
+})
+
+test('an unpublished nutrient stays absent from the export, never zero', () => {
+  const e = entry({ perServing: { kcal: 146 }, nutrients: { kcal: 292 } })
+  const [day] = weekLogPayload({ date: '2026-08-09', entries: [e] }, {}, '2026-08-09').days
+  assert.equal('sodium_mg' in day.entries[0].perServing, false)
+})
+
+test('empty days are omitted rather than exported as blanks', () => {
+  const p = weekLogPayload({ date: '2026-08-09', entries: [] }, { '2026-08-08': [] }, '2026-08-09')
+  assert.deepEqual(p.days, [])
 })

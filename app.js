@@ -4,6 +4,7 @@ import {
 } from './recommend.mjs'
 import {
   parseCronometerCsv, datesInCsv, parseHealthPayload, EXTRA_LABELS, CronometerParseError,
+  weekLogPayload,
 } from './cronometer.mjs'
 
 const PROFILE_KEY = 'utdining.profile'
@@ -45,7 +46,12 @@ const DEFAULT_PROFILE = {
   // What was eaten straight from the app, kept separate from the imported baseline so the
   // two can never be confused for each other. See logToday().
   log: null,
+  // Finished days, keyed by ISO date, so a week can be exported for entry into Cronometer.
+  // Pruned to LOG_HISTORY_DAYS — this is a transcription queue, not a health record.
+  logHistory: {},
 }
+
+const LOG_HISTORY_DAYS = 21
 
 const NUTRIENT_LABEL = {
   kcal: 'Calories', protein_g: 'Protein (g)', carb_g: 'Carbs (g)', fat_g: 'Fat (g)',
@@ -116,6 +122,30 @@ function logToday() {
   return profile.log?.date === todayIso() ? profile.log.entries : []
 }
 
+/**
+ * Moves a finished day out of the live log and into history, so a week can be exported later.
+ *
+ * Runs on load as well as before a new day's first entry: a day he logged and then never
+ * opened the app again on would otherwise be dropped silently at midnight, which is the one
+ * outcome that makes the export untrustworthy.
+ */
+function archiveStaleLog() {
+  const log = profile.log
+  if (!log?.date || log.date === todayIso()) return
+  if (Array.isArray(log.entries) && log.entries.length > 0) {
+    profile.logHistory = { ...profile.logHistory, [log.date]: log.entries }
+  }
+  profile.log = null
+
+  const cutoff = new Date(`${todayIso()}T00:00:00Z`)
+  cutoff.setUTCDate(cutoff.getUTCDate() - LOG_HISTORY_DAYS)
+  const from = cutoff.toISOString().slice(0, 10)
+  for (const date of Object.keys(profile.logHistory)) {
+    if (date < from) delete profile.logHistory[date]
+  }
+  saveProfile()
+}
+
 function loggedTotals() {
   const total = {}
   for (const entry of logToday()) {
@@ -139,16 +169,23 @@ function consumedToday() {
  * scrape rolls the menu window forward daily and an item can drop out of it while still
  * sitting in today's log.
  */
-function logAte(itemId, servings) {
+function logAte(itemId, servings, station = null) {
   const item = menu?.items[itemId]
   if (!item || !(servings > 0)) return
+  archiveStaleLog()
   if (profile.log?.date !== todayIso()) profile.log = { date: todayIso(), entries: [] }
 
   profile.log.entries.push({
     itemId,
     name: item.name,
+    station,
     servings,
     display: describeServing(servings, item.portion),
+    // The raw portion string and the per-serving figures are what Cronometer's custom-food
+    // form asks for, and both are snapshotted for the same reason as the totals: the item can
+    // leave menu.json before the week gets transcribed.
+    portion: item.portion.raw,
+    perServing: deliversFor(item.nutrients, 1),
     nutrients: deliversFor(item.nutrients, servings),
     at: new Date().toISOString(),
   })
@@ -354,14 +391,14 @@ function renderPick(p) {
   const ate = document.createElement('button')
   ate.className = 'primary'
   ate.textContent = 'Ate it'
-  ate.onclick = () => { logAte(p.itemId, p.servings); flash(ate, 'Logged ✓') }
+  ate.onclick = () => { logAte(p.itemId, p.servings, p.station); flash(ate, 'Logged ✓') }
   ateRow.append(ate)
   for (const [mult, label] of [[0.5, '½'], [1.5, '1½'], [2, '2']]) {
     const b = document.createElement('button')
     b.className = 'chip'
     b.textContent = `×${label}`
     b.setAttribute('aria-label', `Ate ${label} times the suggested amount`)
-    b.onclick = () => { logAte(p.itemId, p.servings * mult); flash(b, '✓') }
+    b.onclick = () => { logAte(p.itemId, p.servings * mult, p.station); flash(b, '✓') }
     ateRow.append(b)
   }
   el.append(ateRow)
@@ -521,10 +558,17 @@ function renderLogSearch() {
   // Everything on today's menu at this hall, not just the selected meal: breakfast gets
   // logged at lunchtime more often than not.
   const day = currentHall()?.days.find((d) => d.date === todayIso())
-  const ids = new Set((day?.meals ?? []).flatMap((m) => m.stations.flatMap((s) => s.itemIds)))
+  // Station is carried through so an exported entry says where the dish came from — a name
+  // alone is not always enough to find the right dish again a week later.
+  const stationOf = new Map()
+  for (const m of day?.meals ?? []) {
+    for (const s of m.stations) {
+      for (const id of s.itemIds) if (!stationOf.has(id)) stationOf.set(id, s.name)
+    }
+  }
 
-  const matches = [...ids]
-    .map((id) => (menu.items[id] ? { itemId: id, ...menu.items[id] } : null))
+  const matches = [...stationOf.keys()]
+    .map((id) => (menu.items[id] ? { itemId: id, station: stationOf.get(id), ...menu.items[id] } : null))
     .filter((it) => it?.name.toLowerCase().includes(term))
     .slice(0, 8)
 
@@ -537,7 +581,7 @@ function renderLogSearch() {
     const b = document.createElement('button')
     b.className = 'chip'
     b.textContent = `${item.name} (${item.portion.raw})`
-    b.onclick = () => { logAte(item.itemId, 1); flash(b, 'Logged ✓') }
+    b.onclick = () => { logAte(item.itemId, 1, item.station); flash(b, 'Logged ✓') }
     box.append(b)
   }
 }
@@ -841,6 +885,31 @@ $('#addblock').onsubmit = (e) => {
   saveProfile(); renderPrefs(); renderNow()
 }
 
+$('#copyweek').onclick = async () => {
+  const status = $('#weekstatus')
+  const payload = weekLogPayload(profile.log, profile.logHistory, todayIso())
+  const dishes = payload.days.reduce((a, d) => a + d.entries.length, 0)
+
+  if (dishes === 0) {
+    status.textContent = 'Nothing logged in the last week yet.'
+    status.className = 'status'
+    return
+  }
+
+  const text = JSON.stringify(payload, null, 2)
+  const summary = `${dishes} dish(es) across ${payload.days.length} day(s)`
+  try {
+    await navigator.clipboard.writeText(text)
+    status.textContent = `Copied — ${summary}.`
+    status.className = 'status ok'
+  } catch {
+    $('#weekbox').open = true
+    $('#weektext').value = text
+    status.textContent = `Clipboard blocked — ${summary} shown below, select and copy it.`
+    status.className = 'status bad'
+  }
+}
+
 $('#copysettings').onclick = async () => {
   const status = $('#backupstatus')
   try {
@@ -946,6 +1015,8 @@ function populateMeals() {
 }
 
 async function start() {
+  // Before anything renders: yesterday's log belongs in history, not in today's totals.
+  archiveStaleLog()
   renderPrefs()
   renderFuel()
   try {

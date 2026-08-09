@@ -44,6 +44,16 @@
     <div id="loglist"></div>
     <button id="clearlog" class="ghost hidden">Clear — I've entered these in Cronometer</button>
 
+    <h2>Export for Cronometer</h2>
+    <p class="hint">A week of logged dishes, with per-serving figures and portions — what
+      Cronometer's Custom Food form asks for. Paste it wherever you do the transcribing.</p>
+    <button id="copyweek" class="ghost">Copy this week's log</button>
+    <details id="weekbox">
+      <summary class="hint">Show the text instead</summary>
+      <textarea id="weektext" rows="5" aria-label="Week's log" readonly></textarea>
+    </details>
+    <p id="weekstatus" class="status"></p>
+
     <h2>Log something else</h2>
     <input id="logsearch" placeholder="chicken" aria-label="Find a dish on today's menu">
     <div class="chips" id="logresults"></div>
