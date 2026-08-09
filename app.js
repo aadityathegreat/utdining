@@ -1,6 +1,6 @@
 import {
   recommend, needVector, unservableGaps, shareForMeal, cronometerEntry,
-  deliversFor, mergeConsumed, describeServing,
+  deliversFor, mergeConsumed, describeServing, MODES, profileForMode, shareForKcal,
 } from './recommend.mjs'
 import {
   parseCronometerCsv, datesInCsv, parseHealthPayload, EXTRA_LABELS, CronometerParseError,
@@ -68,6 +68,10 @@ const $ = (sel) => document.querySelector(sel)
 let profile = loadProfile()
 let menu = null
 let ratingItem = null
+// Which hall's tab is selected, and whether this is a meal, a snack or pre-workout food.
+// Neither belongs in the saved profile: both are about right now, not about preferences.
+let hallNum = null
+let mode = 'meal'
 
 function loadProfile() {
   try {
@@ -184,7 +188,7 @@ async function loadMenu() {
   return res.json()
 }
 
-const currentHall = () => menu.halls.find((h) => h.num === $('#hall').value) ?? menu.halls[0]
+const currentHall = () => menu.halls.find((h) => h.num === hallNum) ?? menu.halls[0]
 
 function itemsForSelection() {
   const hall = currentHall()
@@ -215,10 +219,15 @@ function renderNow() {
   }
 
   // What is left of the day, divided across the meals still ahead — this plate is one
-  // meal, not the rest of the day in a single sitting.
+  // meal, not the rest of the day in a single sitting. A snack or pre-workout plate is
+  // sized to a calorie ceiling instead, because "a share of what is left" is the wrong
+  // question for something eaten between meals.
   const dayNeed = needVector(profile.targets, consumedToday())
-  const need = shareForMeal(dayNeed, mealsLeftToday())
-  const picks = recommend(items, need, profile)
+  const modeSpec = MODES[mode]
+  const need = modeSpec.kcalCap == null
+    ? shareForMeal(dayNeed, mealsLeftToday())
+    : shareForKcal(dayNeed, modeSpec.kcalCap)
+  const picks = recommend(items, need, profileForMode(profile, mode), { maxItems: modeSpec.maxItems })
 
   if (picks.length === 0) {
     if (!(profile.targets.kcal > 0)) {
@@ -245,6 +254,16 @@ function renderNow() {
     picksEl.append(warn)
   }
 
+  // Pre-workout reverses fibre from a reward to a penalty and marks fat down. That is a rule
+  // of thumb about eating before training, not a health claim, and it should read as one.
+  if (mode === 'preworkout') {
+    const note = document.createElement('div')
+    note.className = 'note'
+    note.textContent = 'Ranking carbs up, fat and fibre down — the usual rule of thumb for '
+      + 'eating before training, not medical advice. Everything else scores as normal.'
+    picksEl.append(note)
+  }
+
   for (const p of picks) picksEl.append(renderPick(p))
 
   const kcal = Math.round(picks.reduce((a, p) => a + (p.delivers.kcal ?? 0), 0))
@@ -252,8 +271,8 @@ function renderNow() {
   const total = document.createElement('div')
   total.className = 'total'
   total.textContent =
-    `This plate: ${kcal} cal, ${protein} g protein. ` +
-    `Budget for this meal was ${Math.round(need.kcal ?? 0)} cal, ` +
+    `This ${mode === 'meal' ? 'plate' : MODES[mode].label.toLowerCase()}: ${kcal} cal, ` +
+    `${protein} g protein. Budget was ${Math.round(need.kcal ?? 0)} cal, ` +
     `${Math.round(dayNeed.kcal ?? 0)} left for the whole day.`
   picksEl.append(total)
 }
@@ -723,7 +742,6 @@ $('#clearlog').onclick = () => {
   renderNow()
 }
 
-$('#hall').onchange = () => { populateMeals(); renderNow() }
 $('#meal').onchange = renderNow
 
 $('#csv').onchange = async (e) => {
@@ -873,16 +891,43 @@ $('#notedlg').onclose = () => {
   renderPrefs()
 }
 
+// Tabs rather than a dropdown: with two halls open the question is "J2 or JCL", and that
+// should be one tap. Hidden entirely while only one hall is listed — a tab strip with a single
+// tab is furniture. It appears on its own the day the scrape finds a second hall.
 function populateHalls() {
-  const sel = $('#hall')
-  sel.innerHTML = ''
+  const box = $('#halltabs')
+  box.innerHTML = ''
+  if (!menu.halls.some((h) => h.num === hallNum)) hallNum = menu.halls[0]?.num ?? null
+
   for (const hall of menu.halls) {
-    const opt = document.createElement('option')
-    opt.value = hall.num
-    opt.textContent = hall.name
-    sel.append(opt)
+    const b = document.createElement('button')
+    b.setAttribute('role', 'tab')
+    b.setAttribute('aria-selected', String(hall.num === hallNum))
+    b.className = hall.num === hallNum ? 'on' : ''
+    b.textContent = hall.name
+    b.onclick = () => {
+      hallNum = hall.num
+      populateHalls()
+      populateMeals()
+      renderNow()
+    }
+    box.append(b)
   }
-  sel.parentElement.classList.toggle('hidden', false)
+  box.classList.toggle('hidden', menu.halls.length < 2)
+}
+
+function populateModes() {
+  const box = $('#modetabs')
+  box.innerHTML = ''
+  for (const [key, m] of Object.entries(MODES)) {
+    const b = document.createElement('button')
+    b.setAttribute('role', 'tab')
+    b.setAttribute('aria-selected', String(key === mode))
+    b.className = key === mode ? 'on' : ''
+    b.textContent = m.label
+    b.onclick = () => { mode = key; populateModes(); renderNow() }
+    box.append(b)
+  }
 }
 
 function populateMeals() {
@@ -911,6 +956,7 @@ async function start() {
     return
   }
   populateHalls()
+  populateModes()
   populateMeals()
   renderPrefs()
   renderNow()

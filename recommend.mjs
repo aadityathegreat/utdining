@@ -123,6 +123,71 @@ export function scoreItem(item, need, profile) {
 
 const roundToStep = (x, step) => Math.round(x / step) * step
 
+/**
+ * Eating modes. A mode changes three things: how much of the day's remainder the plate is
+ * sized against, how many dishes it may span, and which nutrients are rewarded.
+ *
+ * `preworkout` is the only one that reverses a weight — fibre goes from reward to penalty, and
+ * fat is penalised harder. That is a rule of thumb about eating before training, not a health
+ * claim, and the UI says so. Everything else stays the arithmetic the room's rules describe.
+ */
+export const MODES = {
+  meal: {
+    label: 'Meal',
+    kcalCap: null, // sized by shareForMeal instead — a meal is a share of what is left
+    maxItems: MAX_ITEMS,
+    rewards: {},
+    penalties: {},
+  },
+  snack: {
+    label: 'Snack',
+    kcalCap: 300,
+    maxItems: 2,
+    rewards: {},
+    penalties: {},
+  },
+  preworkout: {
+    label: 'Pre-workout',
+    kcalCap: 400,
+    // One dish, not two. The recommender picks each later item against what the earlier ones
+    // left unmet, so a second slot reliably filled itself with the highest-fibre thing on the
+    // line once the carbs were covered — beans behind pasta. One dish before training is also
+    // the realistic ask.
+    maxItems: 1,
+    rewards: { carb_g: 3.0, protein_g: 1.5, fiber_g: 0 },
+    // Fibre is penalised hard rather than merely un-rewarded. At 1.5 the first build still
+    // ranked kidney beans second behind pasta, because the carb reward outweighed it — which
+    // is the one food shape this mode exists to avoid.
+    penalties: { fiber_g: 3.0, fat_g: 2.0 },
+  },
+}
+
+/**
+ * The profile a mode implies. Returned as a copy so the stored profile is never mutated —
+ * a mode is a view of the same preferences, not a change to them.
+ */
+export function profileForMode(profile, modeKey) {
+  const mode = MODES[modeKey] ?? MODES.meal
+  return {
+    ...profile,
+    nutrientWeightOverrides: { ...(profile.nutrientWeightOverrides ?? {}), ...mode.rewards },
+    penaltyWeightOverrides: { ...(profile.penaltyWeightOverrides ?? {}), ...mode.penalties },
+  }
+}
+
+/**
+ * Scales a need vector down to a calorie ceiling, keeping every nutrient in proportion.
+ *
+ * Used for snacks and pre-workout food, where the honest question is not "what is left today"
+ * but "what fits in 300 calories of it". With no energy target set there is nothing to scale
+ * against, so the vector is returned untouched rather than guessed at.
+ */
+export function shareForKcal(need, kcalCap) {
+  if (!(need.kcal > 0) || !(kcalCap > 0)) return { ...need }
+  const factor = Math.min(1, kcalCap / need.kcal)
+  return Object.fromEntries(Object.entries(need).map(([k, v]) => [k, v * factor]))
+}
+
 /** Rounds servings to something actually servable at a buffet line. */
 export function roundServings(servings, portion) {
   if (portion.unitClass === 'count') return Math.max(1, Math.round(servings))

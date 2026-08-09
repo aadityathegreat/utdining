@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   recommend, scoreItem, needVector, isExcluded, describeServing, roundServings,
-  cronometerEntry, deliversFor, mergeConsumed,
+  cronometerEntry, deliversFor, mergeConsumed, MODES, profileForMode, shareForKcal,
 } from '../recommend.mjs'
 
 const nut = (o) => ({
@@ -169,6 +169,45 @@ test('an unknown consumed value drops the nutrient instead of assuming zero eate
 test('an absent consumed key is still a real zero', () => {
   const need = needVector({ kcal: 2000, fiber_g: 38 }, { kcal: 500 })
   assert.equal(need.fiber_g, 38)
+})
+
+test('shareForKcal scales the whole vector to the calorie ceiling', () => {
+  const scaled = shareForKcal({ kcal: 1200, protein_g: 60 }, 300)
+  assert.equal(scaled.kcal, 300)
+  assert.equal(scaled.protein_g, 15)
+})
+
+test('shareForKcal leaves the vector alone with no energy target', () => {
+  // targets.kcal of 0 means "do not score energy", so there is nothing to scale against and
+  // inventing a factor would silently shrink every other nutrient.
+  assert.deepEqual(shareForKcal({ protein_g: 60 }, 300), { protein_g: 60 })
+})
+
+test('shareForKcal never scales up when little is left', () => {
+  const scaled = shareForKcal({ kcal: 120, protein_g: 10 }, 300)
+  assert.equal(scaled.kcal, 120)
+  assert.equal(scaled.protein_g, 10)
+})
+
+test('pre-workout mode turns fibre from a reward into a penalty', () => {
+  const p = profileForMode({ targets: {} }, 'preworkout')
+  assert.equal(p.nutrientWeightOverrides.fiber_g, 0)
+  // Penalised, and penalised harder than the carb reward can shrug off: at 1.5 the ranking
+  // still put kidney beans behind pasta, which is the food shape this mode exists to avoid.
+  assert.ok(p.penaltyWeightOverrides.fiber_g >= p.nutrientWeightOverrides.carb_g)
+  assert.equal(p.nutrientWeightOverrides.carb_g, 3)
+})
+
+test('a mode never mutates the stored profile', () => {
+  const original = { targets: {}, penaltyWeightOverrides: { sodium_mg: 2.25 } }
+  const p = profileForMode(original, 'preworkout')
+  assert.equal(original.penaltyWeightOverrides.fiber_g, undefined)
+  assert.equal(p.penaltyWeightOverrides.sodium_mg, 2.25, 'a learned dislike survives the mode')
+})
+
+test('meal mode is sized by share, not a calorie cap', () => {
+  assert.equal(MODES.meal.kcalCap, null)
+  assert.ok(MODES.snack.kcalCap > 0)
 })
 
 test('deliversFor scales published nutrients and drops unpublished ones', () => {

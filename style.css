@@ -106,6 +106,26 @@ h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: v
 .rate button { flex: 1; background: transparent; }
 .rate button.on { border-color: var(--accent); color: var(--accent); }
 
+/* Hall tabs and mode tabs. Both are segmented rows rather than dropdowns: the answer is one
+   tap, and the options are few enough to show at once. */
+.halltabs, .modetabs { display: flex; gap: 6px; }
+.halltabs { margin-bottom: 8px; }
+.modetabs { flex: 1; }
+.halltabs button, .modetabs button {
+  flex: 1;
+  background: transparent;
+  color: var(--dim);
+  padding: 8px 10px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.halltabs button.on, .modetabs button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
 /* One big button for the amount you were told, multipliers beside it for anything else.
    button.primary is full-width by default, which has to be undone inside this row. */
 .ate { display: flex; gap: 8px; align-items: stretch; margin-top: 12px; margin-bottom: 10px; }
