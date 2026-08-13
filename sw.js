@@ -1,6 +1,9 @@
 // Offline cache. J2's basement has no signal and the app has to open anyway.
-const CACHE = 'utdining-v5'
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'recommend.mjs', 'cronometer.mjs', 'manifest.json']
+const CACHE = 'utdining-v6'
+const SHELL = [
+  './', 'index.html', 'style.css', 'app.js',
+  'recommend.mjs', 'cronometer.mjs', 'nutrition.mjs', 'manifest.json',
+]
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()))

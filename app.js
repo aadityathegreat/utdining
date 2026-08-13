@@ -1,10 +1,12 @@
 import {
-  recommend, needVector, unservableGaps, shareForMeal, cronometerEntry,
+  recommend, needVector, unservableGaps, shareForMeal, cronometerEntry, cronometerFields,
   deliversFor, mergeConsumed, describeServing, MODES, profileForMode, shareForKcal,
+  nutrientsOf, SuspectItemError,
 } from './recommend.mjs'
 import {
   parseCronometerCsv, datesInCsv, parseHealthPayload, EXTRA_LABELS, CronometerParseError,
 } from './cronometer.mjs'
+import { suspectOf } from './nutrition.mjs'
 
 const PROFILE_KEY = 'utdining.profile'
 
@@ -19,7 +21,12 @@ const DEFAULT_PROFILE = {
   targets: {
     kcal: 0,              // set in Prefs
     protein_g: 0,         // set in Prefs
-    carb_g: 0,            // set in Prefs
+    // Exactly one of these carries a number; see carbBasis. Cronometer shows a single
+    // carbohydrate goal that the account configures as total OR net, so the app stores it
+    // the same way. Keeping both keys and leaving one at 0 is what makes it impossible to
+    // score a dish's total carbohydrate against a net-carb target.
+    carb_g: 0,            // set in Prefs — total carbohydrate
+    netcarb_g: 0,         // set in Prefs — total carbohydrate less fibre
     fat_g: 0,             // set in Prefs
     fiber_g: 38,          // RDA, adult male
     sodium_mg: 2300,      // upper limit — sodium is a budget to spend, not a goal to hit
@@ -35,11 +42,17 @@ const DEFAULT_PROFILE = {
     vitc_mg: 75, vita_mcg: 900, vite_mg: 15, vitk_mcg: 75,
     selenium_mcg: 55, phosphorus_mg: 1250, copper_mg: 0.9,
   },
+  // Which carbohydrate figure the target above is. 'total' by default because that is what
+  // Cronometer shows unless the account turns net carbs on.
+  carbBasis: 'total',
   restrictions: ['Beef', 'Pork'],
   refluxFilter: false,
   ingredientBlocklist: [],
   itemWeights: {},
   penaltyWeightOverrides: {},
+  // Dishes whose implausible UT figures were overridden by hand, so a false positive in the
+  // plausibility checks is never a dead end.
+  allowSuspect: [],
   consumed: null,
   extras: null,
   // What was eaten straight from the app, kept separate from the imported baseline so the
@@ -48,11 +61,15 @@ const DEFAULT_PROFILE = {
 }
 
 const NUTRIENT_LABEL = {
-  kcal: 'Calories', protein_g: 'Protein (g)', carb_g: 'Carbs (g)', fat_g: 'Fat (g)',
+  kcal: 'Calories', protein_g: 'Protein (g)', carb_g: 'Total carbs (g)',
+  netcarb_g: 'Net carbs (g)', fat_g: 'Fat (g)',
   fiber_g: 'Fibre (g)', sodium_mg: 'Sodium (mg)', satfat_g: 'Sat fat (g)',
   addedsugar_g: 'Added sugar (g)', vitd_mcg: 'Vitamin D (mcg)', calcium_mg: 'Calcium (mg)',
   iron_mg: 'Iron (mg)', potassium_mg: 'Potassium (mg)',
 }
+
+/** The carb key the profile is actually keeping a target in. */
+const carbKey = () => (profile.carbBasis === 'net' ? 'netcarb_g' : 'carb_g')
 
 const RESTRICTION_ICONS = [
   'Beef', 'Pork', 'Milk', 'Eggs', 'Fish', 'Shellfish', 'Peanuts', 'TreeNuts',
@@ -76,7 +93,18 @@ let mode = 'meal'
 function loadProfile() {
   try {
     const saved = JSON.parse(localStorage.getItem(PROFILE_KEY))
-    if (saved?.version === DEFAULT_PROFILE.version) return { ...DEFAULT_PROFILE, ...saved }
+    if (saved?.version === DEFAULT_PROFILE.version) {
+      // `targets` is merged key by key rather than replaced wholesale. A flat spread would
+      // drop any target added since the profile was saved, and the version number is
+      // deliberately not bumped for an added key — bumping it wipes the phone, and retyping
+      // targets is the exact misery this app already had to fix once.
+      return {
+        ...DEFAULT_PROFILE,
+        ...saved,
+        targets: { ...DEFAULT_PROFILE.targets, ...(saved.targets ?? {}) },
+        extraTargets: { ...DEFAULT_PROFILE.extraTargets, ...(saved.extraTargets ?? {}) },
+      }
+    }
   } catch { /* corrupt storage falls back to defaults */ }
   return structuredClone(DEFAULT_PROFILE)
 }
@@ -149,7 +177,7 @@ function logAte(itemId, servings) {
     name: item.name,
     servings,
     display: describeServing(servings, item.portion),
-    nutrients: deliversFor(item.nutrients, servings),
+    nutrients: deliversFor(nutrientsOf(item), servings),
     at: new Date().toISOString(),
   })
   saveProfile()
@@ -212,6 +240,10 @@ function renderNow() {
   picksEl.innerHTML = ''
 
   const items = itemsForSelection()
+  // Rendered before the early returns: a dish blocked as suspect is exactly the thing to
+  // say out loud when the list comes back short, or empty.
+  renderBlocked(items)
+
   if (items.length === 0) {
     emptyEl.textContent = `No ${$('#meal').value.toLowerCase()} menu for today at this hall.`
     emptyEl.classList.remove('hidden')
@@ -330,21 +362,14 @@ function renderPick(p) {
     el.append(caveat)
   }
 
-  // Cronometer cannot be written to, so the best available move is handing over exactly
-  // what its custom-food form asks for. Created once per dish, reused forever after.
+  // Cronometer cannot be written to: no public API, no diary import, and a mobile Custom
+  // Food screen made of separate numeric inputs that one paste has never filled. So the
+  // button opens the fields in form order, one tap each, and says exactly that. Naming it
+  // "Copy for Cronometer" claimed more than the clipboard can do.
   const copy = document.createElement('button')
   copy.className = 'copy'
-  copy.textContent = 'Copy for Cronometer'
-  copy.onclick = async () => {
-    const item = { ...menu.items[p.itemId], name: p.name, station: p.station }
-    try {
-      await navigator.clipboard.writeText(cronometerEntry(item, p.servings))
-      copy.textContent = 'Copied — paste into Custom Food'
-    } catch {
-      copy.textContent = 'Clipboard blocked — open Prefs to copy manually'
-    }
-    setTimeout(() => { copy.textContent = 'Copy for Cronometer' }, 3000)
-  }
+  copy.textContent = 'Copy nutrition reference'
+  copy.onclick = () => openCronometerSheet({ ...menu.items[p.itemId], itemId: p.itemId, name: p.name, station: p.station }, p.servings)
   el.append(copy)
 
   // One tap for the ordinary case, one more for a different amount. Multipliers rather
@@ -378,6 +403,135 @@ function renderPick(p) {
   }
   el.append(rateRow)
   return el
+}
+
+// ---------------------------------------------------------------------------
+// Cronometer handoff
+// ---------------------------------------------------------------------------
+
+/**
+ * The Custom Food form, field by field, in the order Cronometer presents them.
+ *
+ * This is the honest shape of the handoff. Cronometer exposes no API, accepts no diary
+ * import, and its mobile Custom Food screen is a set of separate inputs — pasting one block
+ * into any of them fills that one input with the whole block. So this is a copy button per
+ * field, and the sheet says plainly that it is manual entry rather than an import.
+ *
+ * A dish whose UT figures failed the plausibility checks never gets here: matching
+ * Cronometer perfectly against a wrong number still produces a wrong diary.
+ */
+function openCronometerSheet(item, servings) {
+  const dlg = $('#cronodlg')
+  const box = $('#cronofields')
+  const status = $('#cronostatus')
+  box.innerHTML = ''
+  status.textContent = ''
+  status.className = 'status'
+  $('#crononame').textContent = item.name
+  $('#cronoservings').textContent = `Create it once, then log ${Math.round(servings * 100) / 100} × this serving.`
+
+  let fields
+  try {
+    fields = cronometerFields(item, servings)
+  } catch (err) {
+    if (!(err instanceof SuspectItemError)) throw err
+    status.textContent = `${err.message} Copying it would put a wrong number in your diary.`
+    status.className = 'status bad'
+    dlg.showModal()
+    return
+  }
+
+  for (const { label, value, unit } of fields) {
+    const row = document.createElement('div')
+    row.className = 'cronorow'
+
+    const name = document.createElement('span')
+    name.className = 'cronolabel'
+    name.textContent = label
+
+    if (value == null) {
+      // Blank, never 0. Entering a zero tells Cronometer the food contains none of it and
+      // skews every daily total from then on.
+      const blank = document.createElement('span')
+      blank.className = 'cronoblank'
+      blank.textContent = 'UT publishes nothing — leave blank'
+      row.append(name, blank)
+    } else {
+      const text = `${value}${unit}`
+      const b = document.createElement('button')
+      // Explicitly not a submit button: this sheet lives inside a `method="dialog"` form,
+      // where the default type would close the dialog on the first field copied.
+      b.type = 'button'
+      b.className = 'chip'
+      b.textContent = text
+      b.setAttribute('aria-label', `Copy ${label}: ${text}`)
+      b.onclick = async () => {
+        // The unit is stripped for the numeric fields: Cronometer's nutrient inputs take a
+        // number, and "12.4g" pasted into one of them is rejected or truncated.
+        try {
+          await navigator.clipboard.writeText(String(value))
+          flash(b, 'Copied ✓')
+        } catch {
+          status.textContent = 'Clipboard blocked — copy the reference block below by hand.'
+          status.className = 'status bad'
+        }
+      }
+      row.append(name, b)
+    }
+    box.append(row)
+  }
+
+  $('#cronoall').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(cronometerEntry(item, servings))
+      status.textContent = 'Copied the whole block. It is a reference to type from, not an import.'
+      status.className = 'status ok'
+    } catch {
+      $('#cronotext').value = cronometerEntry(item, servings)
+      $('#cronofallback').open = true
+      status.textContent = 'Clipboard blocked — select the text below instead.'
+      status.className = 'status bad'
+    }
+  }
+
+  dlg.showModal()
+}
+
+/** Dishes on today's menu that the plausibility checks blocked, with UT's exact figures. */
+function renderBlocked(items) {
+  const box = $('#blocked')
+  box.innerHTML = ''
+
+  const blocked = items
+    .map((it) => ({ item: it, reasons: suspectOf(it) }))
+    .filter((b) => b.reasons.length > 0 && !profile.allowSuspect.includes(b.item.itemId))
+  if (blocked.length === 0) return
+
+  const note = document.createElement('div')
+  note.className = 'note'
+  note.textContent = blocked.length === 1
+    ? 'One dish is off the list because UT\'s published figures for it cannot be right:'
+    : `${blocked.length} dishes are off the list because UT's published figures for them cannot be right:`
+  box.append(note)
+
+  for (const { item, reasons } of blocked) {
+    const row = document.createElement('div')
+    row.className = 'blockedrow'
+    const text = document.createElement('span')
+    // UT's exact value, quoted rather than corrected — the app has no way to know the
+    // right number and inventing one would be worse than leaving the dish out.
+    text.textContent = `${item.name} — ${reasons.map((r) => r.message).join('; ')}`
+    const allow = document.createElement('button')
+    allow.className = 'ghost'
+    allow.textContent = 'Use it anyway'
+    allow.onclick = () => {
+      profile.allowSuspect.push(item.itemId)
+      saveProfile()
+      renderNow()
+    }
+    row.append(text, allow)
+    box.append(row)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -450,7 +604,9 @@ function renderFuel() {
   // the baseline, so showing app-logged dishes here would fold them in and count them twice.
   const consumed = baselineToday() ?? {}
   manual.innerHTML = ''
-  for (const key of ['kcal', 'protein_g', 'carb_g', 'fat_g']) {
+  // The carb box asks for whichever figure the targets are in, so what is typed and what it
+  // is measured against are the same quantity.
+  for (const key of ['kcal', 'protein_g', carbKey(), 'fat_g']) {
     const label = document.createElement('label')
     label.textContent = NUTRIENT_LABEL[key]
     const input = document.createElement('input')
@@ -536,8 +692,21 @@ function renderLogSearch() {
   for (const item of matches) {
     const b = document.createElement('button')
     b.className = 'chip'
-    b.textContent = `${item.name} (${item.portion.raw})`
-    b.onclick = () => { logAte(item.itemId, 1); flash(b, 'Logged ✓') }
+    const reasons = suspectOf(item)
+    // Searching for it by name is a deliberate act, so this warns rather than refuses — but
+    // it does not log a figure UT cannot be right about without saying so first.
+    if (reasons.length > 0 && !profile.allowSuspect.includes(item.itemId)) {
+      b.textContent = `⚠ ${item.name} (${item.portion.raw})`
+      b.onclick = () => {
+        if (!confirm(`UT's figures for ${item.name} do not look right: ${reasons.map((r) => r.message).join('; ')}.\n\nLog it anyway?`)) return
+        profile.allowSuspect.push(item.itemId)
+        logAte(item.itemId, 1)
+        flash(b, 'Logged ✓')
+      }
+    } else {
+      b.textContent = `${item.name} (${item.portion.raw})`
+      b.onclick = () => { logAte(item.itemId, 1); flash(b, 'Logged ✓') }
+    }
     box.append(b)
   }
 }
@@ -631,9 +800,27 @@ function renderPrefs() {
     }))
   }
 
+  // Cronometer shows one carbohydrate goal, configured per account as total or net. The
+  // app mirrors that: one input, and a switch saying which figure it is. Two inputs would
+  // invite one number in both boxes and a day's worth of double-counted fibre.
+  const basis = $('#carbbasis')
+  basis.innerHTML = ''
+  for (const [value, label] of [['total', 'Total carbs'], ['net', 'Net carbs']]) {
+    basis.append(chip(label, profile.carbBasis === value, () => {
+      if (profile.carbBasis === value) return
+      // The number moves with the switch rather than being reinterpreted in place: 243 g of
+      // net carbs is not 243 g of total carbs, and silently relabelling it is the bug.
+      profile.targets[carbKey()] = 0
+      profile.carbBasis = value
+      saveProfile(); renderPrefs(); renderFuel(); renderNow()
+    }))
+  }
+
   const targets = $('#targets')
   targets.innerHTML = ''
+  const skip = profile.carbBasis === 'net' ? 'carb_g' : 'netcarb_g'
   for (const key of Object.keys(DEFAULT_PROFILE.targets)) {
+    if (key === skip) continue
     const label = document.createElement('label')
     label.textContent = NUTRIENT_LABEL[key] ?? key
     const input = document.createElement('input')
@@ -665,8 +852,8 @@ function renderPrefs() {
 // deliberately excluded: they are tomorrow's noise, and a backup that carries what he ate is
 // a more personal thing to paste into Notes than a list of targets.
 const SETTINGS_KEYS = [
-  'targets', 'extraTargets', 'restrictions', 'refluxFilter', 'ingredientBlocklist',
-  'itemWeights', 'penaltyWeightOverrides',
+  'targets', 'extraTargets', 'carbBasis', 'restrictions', 'refluxFilter',
+  'ingredientBlocklist', 'itemWeights', 'penaltyWeightOverrides', 'allowSuspect',
 ]
 
 function settingsBlob() {
@@ -699,6 +886,11 @@ function restoreSettings(text) {
     restored++
   }
   if (restored === 0) throw new Error('Nothing in that backup was recognisable.')
+
+  // A backup is pasted text, and this one value decides which carb figure everything is
+  // measured against. Anything but the two known settings falls back to total carbs.
+  if (profile.carbBasis !== 'net') profile.carbBasis = 'total'
+  profile.allowSuspect = (profile.allowSuspect ?? []).filter((id) => typeof id === 'string')
 
   saveProfile()
   renderPrefs()
@@ -816,7 +1008,7 @@ $('#savemanual').onclick = () => {
   // Baseline, not the merged total — see renderFuel(). Typing over a merged figure would
   // bake the app's own log into the baseline and then count it a second time.
   const nutrients = { ...(baselineToday() ?? {}) }
-  for (const key of ['kcal', 'protein_g', 'carb_g', 'fat_g']) {
+  for (const key of ['kcal', 'protein_g', carbKey(), 'fat_g']) {
     const v = Number($(`#m_${key}`).value)
     nutrients[key] = Number.isFinite(v) && v > 0 ? v : 0
   }
@@ -827,7 +1019,11 @@ $('#savemanual').onclick = () => {
 
 $('#savetargets').onclick = () => {
   for (const key of Object.keys(DEFAULT_PROFILE.targets)) {
-    const v = Number($(`#t_${key}`).value)
+    const field = $(`#t_${key}`)
+    // The carb key that is not the current basis has no input on screen. It stays at 0,
+    // which is what keeps a total-carb dish figure from ever meeting a net-carb target.
+    if (!field) { profile.targets[key] = 0; continue }
+    const v = Number(field.value)
     profile.targets[key] = Number.isFinite(v) && v > 0 ? v : 0
   }
   saveProfile(); renderFuel(); renderNow()

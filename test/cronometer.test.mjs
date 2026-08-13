@@ -28,7 +28,35 @@ test('vitamin D converts from IU to mcg', () => {
 
 test('output keys line up with the menu nutrient vocabulary', () => {
   const n = parseCronometerCsv(csv, '2026-08-02').nutrients
-  assert.deepEqual(Object.keys(n).sort(), [...NUTRIENT_KEYS].sort())
+  // Net carbs is the one key on top of UT's published vocabulary. UT publishes total
+  // carbohydrate and fibre, so a dish's net carbs are derived; Cronometer exports its own
+  // column and that figure is read, never re-derived.
+  assert.deepEqual(Object.keys(n).sort(), [...NUTRIENT_KEYS, 'netcarb_g'].sort())
+})
+
+test('total carbs and net carbs are read as separate columns', () => {
+  // The bug this replaces: only `Carbs (g)` was read, so a Cronometer account configured
+  // around a net-carb goal had its whole day compared against total carbohydrate.
+  const n = parseCronometerCsv(csv, '2026-08-02').nutrients
+  assert.ok(n.carb_g != null && n.netcarb_g != null)
+  assert.notEqual(n.carb_g, n.netcarb_g, 'the fixture must exercise a real difference')
+})
+
+test('net carbs come from Cronometer, not from carbs minus fibre', () => {
+  // Cronometer's figure already accounts for the account's sugar-alcohol setting.
+  // Reproducing it by subtraction would be an estimate presented as an exact match.
+  const n = parseCronometerCsv(csv, '2026-08-02').nutrients
+  assert.notEqual(n.netcarb_g, n.carb_g - n.fiber_g)
+})
+
+test('health import leaves net carbs unknown, never zero', () => {
+  // Apple Health defines no net-carb type. Absent would read as "nothing eaten against it",
+  // which hands the recommender a whole day's carb budget on every import.
+  const r = parseHealthPayload(JSON.stringify({
+    schema: 1, date: '2026-08-02', nutrients: { kcal: 900, carb_g: 120 }, missing: [],
+  }), '2026-08-02')
+  assert.equal(r.nutrients.netcarb_g, null)
+  assert.ok(r.missing.includes('netcarb_g'))
 })
 
 test('nutrients UT does not publish are kept separately', () => {
@@ -72,7 +100,8 @@ const health = (over = {}) => JSON.stringify({
 test('health payload: reads today', () => {
   const r = parseHealthPayload(health(), '2026-08-02')
   assert.equal(r.nutrients.kcal, 842.3)
-  assert.deepEqual(r.missing, [])
+  // Net carbs is always missing from a Health import — Apple defines no such type.
+  assert.deepEqual(r.missing, ['netcarb_g'])
 })
 
 test('health payload: missing nutrients become null, never zero', () => {

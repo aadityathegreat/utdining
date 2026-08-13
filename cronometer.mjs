@@ -7,6 +7,10 @@ const COLUMNS = {
   kcal: 'Energy (kcal)',
   protein_g: 'Protein (g)',
   carb_g: 'Carbs (g)',
+  // Read as its own column, never derived. Cronometer's net-carb figure already accounts
+  // for the sugar-alcohol setting on the account; total carbs minus fibre does not, and a
+  // net-carb target compared against total carbs is a whole day's worth of error.
+  netcarb_g: 'Net Carbs (g)',
   fat_g: 'Fat (g)',
   satfat_g: 'Saturated (g)',
   transfat_g: 'Trans-Fats (g)',
@@ -169,7 +173,14 @@ export function parseHealthPayload(text, isoDate) {
     throw new CronometerParseError(`That data is for ${data.date || 'an unknown day'}, not today.`)
   }
 
-  const missing = Array.isArray(data.missing) ? data.missing.map(String) : []
+  // Apple Health defines dietary carbohydrates and no net-carb type at all, so a net-carb
+  // figure can never arrive this way. It is forced unknown rather than left absent, because
+  // an absent nutrient means "nothing eaten against it yet" — which would hand the
+  // recommender a whole day's carb budget every time the Shortcut ran.
+  const missing = [...new Set([
+    ...(Array.isArray(data.missing) ? data.missing.map(String) : []),
+    'netcarb_g',
+  ])]
   const nutrients = {}
 
   for (const [key, value] of Object.entries(data.nutrients ?? {})) {
@@ -181,11 +192,13 @@ export function parseHealthPayload(text, isoDate) {
     nutrients[key] = n
   }
 
-  for (const key of missing) nutrients[key] = null
-
-  if (Object.keys(nutrients).length === 0) {
+  // Checked BEFORE the forced-unknown keys are added, or a payload carrying nothing at all
+  // would look like it carried one nutrient and a broken Shortcut would import silently.
+  if (Object.keys(nutrients).length === 0 && Object.keys(data.nutrients ?? {}).length === 0) {
     throw new CronometerParseError('Shortcut returned no nutrients at all.')
   }
+
+  for (const key of missing) nutrients[key] = null
 
   return { date: data.date, nutrients, missing, generatedAt: String(data.generatedAt ?? '') }
 }

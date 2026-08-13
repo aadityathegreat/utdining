@@ -4,6 +4,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { parseLabel, parseLongMenu, parseLocations, NoNutritionData } from './parse.mjs'
+import { suspectReasons } from '../nutrition.mjs'
 
 const BASE = 'https://hf-foodpro.austin.utexas.edu/foodpro'
 const SITE = 'University Housing and Dining'
@@ -90,6 +91,7 @@ async function main() {
   const seen = new Set()
   let labelFailures = 0
   let unpublished = 0
+  let suspectCount = 0
 
   for (const hall of halls) {
     const hallOut = { num: hall.num, name: hall.name, days: [] }
@@ -137,11 +139,21 @@ async function main() {
           }
 
           const label = labels[row.itemId]
+          // Figures UT published that cannot be true of one serving. Stamped here so the
+          // reason travels with the data and the app does not have to re-derive it; the raw
+          // value is left exactly as published, because a repaired number is a worse lie.
+          const suspect = suspectReasons(label.nutrients, label.portion, row.itemId)
+          if (suspect.length > 0) {
+            suspectCount++
+            console.warn(`  suspect ${row.itemId} (${row.name}): ${suspect.map((s) => s.message).join('; ')}`)
+          }
+
           out.items[row.itemId] = {
             ...label,
             // The label's icon row is missing on a few items; the menu page still shows
             // them, so the union of both is the trustworthy set.
             icons: [...new Set([...label.icons, ...row.icons])],
+            ...(suspect.length > 0 ? { suspect } : {}),
           }
         }
 
@@ -168,7 +180,8 @@ async function main() {
   console.log(
     `wrote ${itemCount} items across ${out.halls.length} hall(s); ` +
     `label cache ${cacheSizeAtStart} -> ${Object.keys(labels).length}; ` +
-    `${labelFailures} label failure(s); ${unpublished} dish(es) with no published nutrition`,
+    `${labelFailures} label failure(s); ${unpublished} dish(es) with no published nutrition; ` +
+    `${suspectCount} dish(es) quarantined as implausible`,
   )
 }
 

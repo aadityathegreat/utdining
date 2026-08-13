@@ -232,6 +232,36 @@ button.copy {
 }
 
 #pastefallback { margin-top: 12px; }
+
+/* The Cronometer Custom Food form, one row per field. The value sits on the right as a
+   tappable chip so the whole sheet reads as a checklist to work down while typing. */
+#cronofields { max-height: 46vh; overflow-y: auto; margin: 10px 0; }
+.cronorow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 15px;
+}
+.cronolabel { flex: 1; }
+.cronorow .chip { font-variant-numeric: tabular-nums; }
+.cronoblank { color: var(--dim); font-size: 13px; text-align: right; }
+#cronofallback textarea { width: 100%; }
+
+/* A dish blocked because UT's own figures cannot be right. Deliberately quiet — it is a
+   footnote under the picks, not an alarm. */
+.blockedrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+  color: var(--dim);
+}
+.blockedrow span { flex: 1; }
+.blockedrow button.ghost { width: auto; padding: 6px 12px; flex-shrink: 0; }
 #pastefallback summary { cursor: pointer; }
 #pastebox {
   width: 100%;

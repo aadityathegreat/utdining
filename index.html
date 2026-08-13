@@ -35,6 +35,7 @@
     <div id="logstrip" class="logstrip hidden"></div>
     <div id="picks"></div>
     <p id="nowempty" class="empty hidden"></p>
+    <div id="blocked"></div>
   </section>
 
   <section id="fuel" class="tabpanel">
@@ -94,6 +95,10 @@
 
     <h2>Targets</h2>
     <p class="hint">Pulled from your Cronometer targets. A target of 0 means "don't score it".</p>
+    <p class="hint">Which carbohydrate figure is your Cronometer goal? Check the number on
+      Cronometer's targets page — if it says <b>Net Carbs</b>, pick that. Getting this wrong
+      compares your goal against a different quantity all day.</p>
+    <div class="chips" id="carbbasis"></div>
     <div class="grid" id="targets"></div>
     <button id="savetargets" class="primary">Save targets</button>
 
@@ -116,6 +121,25 @@
     <button id="reset" class="ghost">Clear everything on this phone</button>
   </section>
 </main>
+
+<dialog id="cronodlg">
+  <form method="dialog">
+    <h3 id="crononame"></h3>
+    <p class="hint">Cronometer has no import and no API, and its Custom Food screen is
+      separate boxes — so this is one tap per field, typed in by you. Tap a value to copy it.</p>
+    <p id="cronoservings" class="hint"></p>
+    <div id="cronofields"></div>
+    <p id="cronostatus" class="status"></p>
+    <details id="cronofallback">
+      <summary class="hint">Clipboard blocked? Copy the whole block by hand</summary>
+      <textarea id="cronotext" rows="6" aria-label="Nutrition reference"></textarea>
+    </details>
+    <menu>
+      <button type="button" id="cronoall" class="ghost">Copy the whole block</button>
+      <button value="close" class="primary">Done</button>
+    </menu>
+  </form>
+</dialog>
 
 <dialog id="notedlg">
   <form method="dialog">

@@ -1,6 +1,8 @@
 // The recommender. Pure functions, no DOM, no I/O — imported by both the app and the
 // tests. The weights below are the product decision; everything else is arithmetic.
 
+import { withDerived, suspectOf } from './nutrition.mjs'
+
 // Protein is weighted heaviest because it is the nutrient a dining hall makes hardest
 // to hit and the one most likely to be short by dinner.
 export const REWARD_WEIGHTS = {
@@ -60,6 +62,13 @@ export function needVector(targets, consumed) {
   return need
 }
 
+/**
+ * The figures to reason about: what UT published, plus net carbohydrate derived from it.
+ * Every read of `item.nutrients` inside this module goes through here, so a dish and a
+ * target can never end up being compared on different definitions of "carbs".
+ */
+export const nutrientsOf = (item) => withDerived(item?.nutrients ?? {})
+
 /** Hard filters. An excluded item never reaches scoring. */
 export function isExcluded(item, profile) {
   const restrictions = profile.restrictions ?? []
@@ -73,6 +82,14 @@ export function isExcluded(item, profile) {
   if (blocked) return `blocked:${blocked}`
 
   if (profile.refluxFilter && REFLUX_TERMS.some(hit)) return 'reflux'
+
+  // Last, deliberately. The checks above are the user's own rules and are the more useful
+  // thing to hear about a dish; this one is a fault in UT's data. Blocked rather than
+  // repaired, and overridable per dish so a false positive is never a dead end.
+  if (!(profile.allowSuspect ?? []).includes(item.itemId) && suspectOf(item).length > 0) {
+    return 'suspect'
+  }
+
   return null
 }
 
@@ -91,7 +108,7 @@ function prefMultiplier(item, profile) {
  * Items with unknown penalty nutrients are flagged so the UI can say so.
  */
 export function scoreItem(item, need, profile) {
-  const n = item.nutrients ?? {}
+  const n = nutrientsOf(item)
   const weights = { ...REWARD_WEIGHTS, ...(profile.nutrientWeightOverrides ?? {}) }
 
   let reward = 0
@@ -154,7 +171,9 @@ export const MODES = {
     // line once the carbs were covered — beans behind pasta. One dish before training is also
     // the realistic ask.
     maxItems: 1,
-    rewards: { carb_g: 3.0, protein_g: 1.5, fiber_g: 0 },
+    // Both carb keys are rewarded because only one of them can carry a target: Prefs stores
+    // the carbohydrate goal as total OR net, never both, and needVector ignores a zero.
+    rewards: { carb_g: 3.0, netcarb_g: 3.0, protein_g: 1.5, fiber_g: 0 },
     // Fibre is penalised hard rather than merely un-rewarded. At 1.5 the first build still
     // ranked kidney beans second behind pasta, because the carb reward outweighed it — which
     // is the one food shape this mode exists to avoid.
@@ -267,6 +286,10 @@ export function mergeConsumed(baseline, logged) {
   return out
 }
 
+// The nutrient inputs on Cronometer's Create a Custom Food form, in the order the form
+// presents them. Deliberately TOTAL carbohydrate: this is a nutrition label, and Cronometer
+// computes net carbs itself from the fibre it is given. Handing it a net figure in the
+// carbohydrate box would subtract fibre twice.
 const CRONOMETER_ROWS = [
   ['Energy', 'kcal', 'kcal'], ['Protein', 'protein_g', 'g'], ['Carbs', 'carb_g', 'g'],
   ['Fat', 'fat_g', 'g'], ['Saturated', 'satfat_g', 'g'], ['Trans-Fats', 'transfat_g', 'g'],
@@ -276,30 +299,63 @@ const CRONOMETER_ROWS = [
   ['Potassium', 'potassium_mg', 'mg'],
 ]
 
+/** Raised instead of returning a payload, so a blocked dish cannot be copied by accident. */
+export class SuspectItemError extends Error {}
+
 /**
- * Text for Cronometer's "Create a Custom Food" form.
+ * Every field of Cronometer's "Create a Custom Food" form, in form order, as separate
+ * values — because Cronometer's mobile form is separate inputs and one paste has never
+ * filled them. Each entry is one tap to copy and one field to fill.
  *
- * Cronometer has no public API and does not accept diary imports, so nothing can be
- * pushed into it. What works is creating the dish once as a custom food — the values
- * below are PER SERVING for exactly that reason, so the entry stays reusable and only
- * the quantity changes each time.
+ * `value` is null where UT published nothing. That field is left blank in Cronometer:
+ * typing 0 would assert the food contains none of it and quietly skew every later total.
  *
- * Nutrients UT does not publish are marked, not zeroed: entering 0 would tell Cronometer
- * something false and quietly skew every daily total afterwards.
+ * @throws {SuspectItemError} when the dish's published figures failed the plausibility
+ *   checks. Matching Cronometer perfectly to a wrong UT number is still a wrong diary.
+ */
+export function cronometerFields(item, servings) {
+  const suspect = suspectOf(item)
+  if (suspect.length > 0) {
+    throw new SuspectItemError(
+      `UT's figures for ${item.name} do not look right: ${suspect.map((s) => s.message).join('; ')}.`,
+    )
+  }
+
+  const n = item.nutrients ?? {}
+  return [
+    { label: 'Food Name', value: `${item.name} (UT ${item.station ?? 'dining'})`, unit: '' },
+    { label: 'Serving Name', value: item.portion.raw, unit: '' },
+    // Only ever a real weight. A ladle is a volume scoop and UT publishes no gram figure
+    // for one, so the field is left out rather than estimated.
+    ...(item.portion.unitClass === 'weight' && item.portion.grams != null
+      ? [{ label: 'Serving Weight', value: item.portion.grams, unit: 'g' }]
+      : []),
+    { label: 'Nutrition Displayed Per', value: '1 serving', unit: '' },
+    { label: 'Nutrition Label Type', value: 'Updated American', unit: '' },
+    ...CRONOMETER_ROWS.map(([label, key, unit]) => ({ label, value: n[key] ?? null, unit })),
+  ]
+}
+
+/**
+ * The same fields as one block of text, for reference while typing them in.
+ *
+ * Cronometer has no public API, accepts no diary import, and its mobile Custom Food screen
+ * is a set of separate numeric inputs — so nothing can be pushed into it and no single
+ * paste can fill it. This block is a reference for manual entry and says so. The values are
+ * PER SERVING so the custom food is created once and only the quantity changes after that.
+ *
+ * @throws {SuspectItemError} see cronometerFields.
  */
 export function cronometerEntry(item, servings) {
-  const n = item.nutrients
-  const lines = CRONOMETER_ROWS.map(([label, key, unit]) =>
-    `${label}: ${n[key] == null ? '(not published — leave blank)' : `${n[key]}${unit}`}`)
+  const lines = cronometerFields(item, servings).map(({ label, value, unit }) =>
+    `${label}: ${value == null ? '(not published — leave blank)' : `${value}${unit}`}`)
 
   return [
-    `${item.name} (UT ${item.station ?? 'dining'})`,
-    `Serving size: ${item.portion.raw}`,
+    'Cronometer → Create a Custom Food. Type these in; there is no paste that fills them.',
     '',
-    'Per serving:',
     ...lines,
     '',
-    `Log ${trim(servings)} × this serving.`,
+    `Then log ${trim(servings)} × this serving.`,
   ].join('\n')
 }
 
@@ -323,7 +379,7 @@ const NUTRIENT_LABEL = {
 /** One line saying why this was picked. Without a visible reason there is no way to
  *  tell when the recommender is wrong. */
 function explain(item, servings, need) {
-  const n = item.nutrients
+  const n = nutrientsOf(item)
   const ranked = Object.keys(REWARD_WEIGHTS)
     .filter((k) => need[k] > 0 && n[k] != null && n[k] > 0)
     .sort((a, b) =>
@@ -365,7 +421,7 @@ export function recommend(items, need, profile, options = {}) {
     if (ranked.length === 0) break
 
     const { item, unknown } = ranked[0]
-    const n = item.nutrients
+    const n = nutrientsOf(item)
 
     // Enough to close the gap in whichever nutrient this item runs out of first —
     // sizing everything off protein alone lands four baked potatoes on the plate.
