@@ -208,12 +208,26 @@ function removeLogEntry(index) {
   renderLogStrip()
 }
 
+/** One icon family, defined once in index.html. Replaces the unicode stand-ins that used
+ *  to sit in button labels — a glyph is not an icon and screen readers read it aloud. */
+function icon(name, label) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('class', 'icon')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('aria-hidden', 'true')
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use')
+  use.setAttribute('href', `#i-${name}`)
+  svg.append(use)
+  if (label) svg.setAttribute('aria-label', label)
+  return svg
+}
+
 /** Briefly confirms on the button itself — a toast is easy to miss one-handed. */
 function flash(button, text) {
-  const original = button.textContent
-  button.textContent = text
+  const original = button.innerHTML
+  button.replaceChildren(icon('check'), document.createTextNode(text ? ` ${text}` : ''))
   button.disabled = true
-  setTimeout(() => { button.textContent = original; button.disabled = false }, 1200)
+  setTimeout(() => { button.innerHTML = original; button.disabled = false }, 1200)
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +270,7 @@ function renderNow() {
 
   if (items.length === 0) {
     emptyEl.textContent = `No ${$('#meal').value.toLowerCase()} menu for today at this hall.`
-    emptyEl.classList.remove('hidden')
+    emptyEl.hidden = false
     return
   }
 
@@ -280,33 +294,31 @@ function renderNow() {
     } else {
       emptyEl.textContent = 'Add what you have eaten today in Fuel, and this fills in.'
     }
-    emptyEl.classList.remove('hidden')
+    emptyEl.hidden = false
     return
   }
-  emptyEl.classList.add('hidden')
+  emptyEl.hidden = true
 
   // With no energy target set, nothing divides by calories and protein is not scored at
   // all — the picks are real but they are answering a much narrower question. Say so
   // rather than letting them read as a full recommendation.
   if (!(profile.targets.kcal > 0) || !(profile.targets.protein_g > 0)) {
-    const warn = document.createElement('div')
-    warn.className = 'note'
-    warn.textContent = 'Calorie and protein targets are not set, so these picks ignore both. '
-      + 'Set them in Prefs (copy from your Cronometer targets page).'
+    const warn = noteBlock('shortfall', 'Targets not set',
+      'Calorie and protein targets are not set, so these picks ignore both. '
+      + 'Set them in Prefs (copy from your Cronometer targets page).')
     picksEl.append(warn)
   }
 
   // Pre-workout reverses fibre from a reward to a penalty and marks fat down. That is a rule
   // of thumb about eating before training, not a health claim, and it should read as one.
   if (mode === 'preworkout') {
-    const note = document.createElement('div')
-    note.className = 'note'
-    note.textContent = 'Ranking carbs up, fat and fibre down — the usual rule of thumb for '
-      + 'eating before training, not medical advice. Everything else scores as normal.'
+    const note = noteBlock('aside', null,
+      'Ranking carbs up, fat and fibre down — the usual rule of thumb for '
+      + 'eating before training, not medical advice. Everything else scores as normal.')
     picksEl.append(note)
   }
 
-  for (const p of picks) picksEl.append(renderPick(p))
+  picks.forEach((p, i) => picksEl.append(renderPick(p, i)))
 
   const kcal = Math.round(picks.reduce((a, p) => a + (p.delivers.kcal ?? 0), 0))
   const protein = Math.round(picks.reduce((a, p) => a + (p.delivers.protein_g ?? 0), 0))
@@ -328,12 +340,10 @@ function renderNow() {
   // enough that the sodium penalty outranks it, and fruit wins on calorie cost instead. That is
   // the weights doing what they were told; what was actually wrong is that nothing said so.
   if (mode === 'meal' && need.protein_g > 0 && protein < need.protein_g * PROTEIN_SHORTFALL_RATIO) {
-    const short = document.createElement('div')
-    short.className = 'note'
-    short.textContent =
-      `Protein is short here: ${protein} g against the ${Math.round(need.protein_g)} g this meal `
-      + 'was aiming at. Nothing on this line closes the gap without spending more of another '
-      + 'budget, so it carries into your later meals.'
+    const short = noteBlock('shortfall', 'Protein short',
+      `${protein} g against the ${Math.round(need.protein_g)} g this meal was aiming at. `
+      + 'Nothing on this line closes the gap without spending more of another budget, so it '
+      + 'carries into your later meals.')
     picksEl.append(short)
   }
 }
@@ -343,7 +353,7 @@ function renderLogStrip() {
   const strip = $('#logstrip')
   const entries = logToday()
   if (entries.length === 0) {
-    strip.classList.add('hidden')
+    strip.hidden = true
     strip.innerHTML = ''
     return
   }
@@ -361,26 +371,65 @@ function renderLogStrip() {
 
   strip.innerHTML = ''
   strip.append(text, undo)
-  strip.classList.remove('hidden')
+  strip.hidden = false
 }
 
-function renderPick(p) {
-  const el = document.createElement('div')
-  el.className = 'pick'
+/**
+ * A pick, rendered at one of two ranks.
+ *
+ * `recommend()` already returns picks best-first, each scored against what the earlier ones
+ * left unmet, and the old UI threw that ordering away by drawing every pick as the same card.
+ * Rank 0 becomes the screen's one loud element — a full-bleed burnt-orange field with the
+ * portion figure at hero size, because the portion is the thing you act on holding a tray.
+ * The rest are quieter panel lines in order.
+ */
+function renderPick(p, rank = 1) {
+  const lead = rank === 0
+  const el = document.createElement(lead ? 'section' : 'div')
+  el.className = lead ? 'field' : 'item'
 
-  const h = document.createElement('h3')
-  h.textContent = p.name
-  const station = document.createElement('p')
-  station.className = 'station'
+  const station = document.createElement('span')
+  station.className = 'eyebrow'
   station.textContent = p.station
+
+  const h = document.createElement(lead ? 'h2' : 'h3')
+  h.textContent = p.name
+
   const amount = document.createElement('span')
-  amount.className = 'amount'
-  amount.textContent = p.display
+  amount.className = 'amount num'
+  if (lead) {
+    // Split for display only — the string itself is produced by describeServing and is
+    // disclosure-critical, so it is never rewritten, only laid out in two parts.
+    const [count, ...rest] = p.display.split(' · ')
+    const big = document.createElement('span')
+    big.className = 'lead'
+    big.textContent = count
+    amount.append(big)
+    if (rest.length) {
+      const small = document.createElement('span')
+      small.className = 'rest'
+      small.textContent = rest.join(' · ')
+      amount.append(small)
+    }
+  } else {
+    amount.textContent = p.display
+  }
+
   const why = document.createElement('p')
   why.className = 'why'
   why.textContent = p.why
 
-  el.append(h, station, amount, why)
+  if (lead) {
+    el.append(station, h, amount, why)
+  } else {
+    // Station and portion share the top line; the name gets the full width beneath it.
+    // Putting the name and the portion on one row collided as soon as the portion was a long
+    // string like "1 serving · 4 oz (~115 g)", which squeezed the dish name to nothing.
+    const head = document.createElement('div')
+    head.className = 'head'
+    head.append(station, amount)
+    el.append(head, h, why)
+  }
 
   // An unpublished nutrient is not the same as a clean one, and the plate should say so.
   if (p.unknownNutrients.length > 0) {
@@ -391,46 +440,53 @@ function renderPick(p) {
     el.append(caveat)
   }
 
+  // One action row, not three stacked ones. On the lead pick these invert to sit on the
+  // orange field; everywhere else they are quiet outlines. Same markup, one class difference.
+  const actions = document.createElement('div')
+  actions.className = 'actions'
+
+  const ate = document.createElement('button')
+  ate.type = 'button'
+  ate.className = lead ? '' : 'primary'
+  ate.textContent = 'Ate it'
+  ate.onclick = () => { logAte(p.itemId, p.servings); flash(ate, 'Logged') }
+  actions.append(ate)
+
+  // Multipliers rather than a number field: at a buffet line you know "about half that",
+  // not grams.
+  for (const [mult, label] of [[0.5, 'x0.5'], [1.5, 'x1.5'], [2, 'x2']]) {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = lead ? 'quiet mult' : 'ghost mult'
+    b.textContent = label
+    b.setAttribute('aria-label', `Ate ${label.slice(1)} times the suggested amount`)
+    b.onclick = () => { logAte(p.itemId, p.servings * mult); flash(b, '') }
+    actions.append(b)
+  }
+
   // Cronometer cannot be written to: no public API, no diary import, and a mobile Custom
   // Food screen made of separate numeric inputs that one paste has never filled. So the
-  // button opens the fields in form order, one tap each, and says exactly that. Naming it
-  // "Copy for Cronometer" claimed more than the clipboard can do.
+  // button opens the fields in form order, one tap each, and says exactly that.
   const copy = document.createElement('button')
-  copy.className = 'copy'
-  copy.textContent = 'Copy nutrition reference'
+  copy.type = 'button'
+  copy.className = lead ? 'quiet' : 'ghost'
+  copy.textContent = 'Nutrition'
+  copy.setAttribute('aria-label', `Nutrition reference for ${p.name}`)
   copy.onclick = () => openCronometerSheet({ ...menu.items[p.itemId], itemId: p.itemId, name: p.name, station: p.station }, p.servings)
-  el.append(copy)
+  actions.append(copy)
 
-  // One tap for the ordinary case, one more for a different amount. Multipliers rather
-  // than a number field because at a buffet line you know "about half that", not grams.
-  const ateRow = document.createElement('div')
-  ateRow.className = 'ate'
-  const ate = document.createElement('button')
-  ate.className = 'primary'
-  ate.textContent = 'Ate it'
-  ate.onclick = () => { logAte(p.itemId, p.servings); flash(ate, 'Logged ✓') }
-  ateRow.append(ate)
-  for (const [mult, label] of [[0.5, '½'], [1.5, '1½'], [2, '2']]) {
-    const b = document.createElement('button')
-    b.className = 'chip'
-    b.textContent = `×${label}`
-    b.setAttribute('aria-label', `Ate ${label} times the suggested amount`)
-    b.onclick = () => { logAte(p.itemId, p.servings * mult); flash(b, '✓') }
-    ateRow.append(b)
-  }
-  el.append(ateRow)
-
-  const rateRow = document.createElement('div')
-  rateRow.className = 'rate'
   const weight = profile.itemWeights[p.itemId]
   for (const [value, label] of [[1, 'Good'], [-1, 'Nope']]) {
     const b = document.createElement('button')
+    b.type = 'button'
+    b.className = lead ? 'quiet' : 'ghost'
     b.textContent = label
     if (weight === value) b.classList.add('on')
     b.onclick = () => rate(p, value)
-    rateRow.append(b)
+    actions.append(b)
   }
-  el.append(rateRow)
+
+  el.append(actions)
   return el
 }
 
@@ -475,7 +531,7 @@ function openCronometerSheet(item, servings) {
   try {
     fields = cronometerFields(item, servings, { allowSuspect })
   } catch (err) {
-    $('#labelspike').classList.add('hidden')
+    $('#labelspike').hidden = true
     if (!(err instanceof SuspectItemError)) throw err
     status.textContent = `${err.message} Copying it would put a wrong number in your diary.`
     status.className = 'status bad'
@@ -512,7 +568,7 @@ function openCronometerSheet(item, servings) {
         // number, and "12.4g" pasted into one of them is rejected or truncated.
         try {
           await navigator.clipboard.writeText(String(value))
-          flash(b, 'Copied ✓')
+          flash(b, 'Copied')
         } catch {
           status.textContent = 'Clipboard blocked — copy the reference block below by hand.'
           status.className = 'status bad'
@@ -559,7 +615,7 @@ function wireLabelSpike(item, allowSuspect = false) {
   $('#labelspike').open = false
   // Shown by default and hidden again by the caller for a quarantined dish, which has no
   // honest label to draw.
-  $('#labelspike').classList.remove('hidden')
+  $('#labelspike').hidden = false
 
   make.onclick = async () => {
     out.innerHTML = ''
@@ -660,16 +716,13 @@ function renderBlocked(items) {
     .filter((b) => b.reasons.length > 0 && !profile.allowSuspect.includes(b.item.itemId))
   if (blocked.length === 0) return
 
-  const note = document.createElement('div')
-  note.className = 'note'
-  note.textContent = blocked.length === 1
+  box.append(noteBlock('blocking', 'Blocked — bad source data', blocked.length === 1
     ? 'One dish is off the list because UT\'s published figures for it cannot be right:'
-    : `${blocked.length} dishes are off the list because UT's published figures for them cannot be right:`
-  box.append(note)
+    : `${blocked.length} dishes are off the list because UT's published figures for them cannot be right:`))
 
   for (const { item, reasons } of blocked) {
     const row = document.createElement('div')
-    row.className = 'blockedrow'
+    row.className = 'row'
     const text = document.createElement('span')
     // UT's exact value, quoted rather than corrected — the app has no way to know the
     // right number and inventing one would be worse than leaving the dish out.
@@ -790,20 +843,20 @@ function renderLog() {
 
   if (entries.length === 0) {
     box.innerHTML = '<p class="hint">Nothing logged in the app today.</p>'
-    $('#clearlog').classList.add('hidden')
+    $('#clearlog').hidden = true
     return
   }
 
   for (const [i, entry] of entries.entries()) {
     const row = document.createElement('div')
-    row.className = 'logrow'
+    row.className = 'row'
     const text = document.createElement('span')
     text.textContent =
       `${entry.name} — ${entry.display} · ${Math.round(entry.nutrients.kcal ?? 0)} cal, ` +
       `${Math.round(entry.nutrients.protein_g ?? 0)} g protein`
     const remove = document.createElement('button')
     remove.className = 'ghost'
-    remove.textContent = '✕'
+    remove.append(icon('close'))
     remove.setAttribute('aria-label', `Remove ${entry.name}`)
     remove.onclick = () => removeLogEntry(i)
     row.append(text, remove)
@@ -817,7 +870,7 @@ function renderLog() {
     `${Math.round(totals.kcal ?? 0)} cal, ${Math.round(totals.protein_g ?? 0)} g protein ` +
     'logged here, on top of whatever was imported.'
   box.append(sum)
-  $('#clearlog').classList.remove('hidden')
+  $('#clearlog').hidden = false
 }
 
 /** Logging something the recommender never suggested — a second helping, or dessert. */
@@ -849,16 +902,16 @@ function renderLogSearch() {
     // Searching for it by name is a deliberate act, so this warns rather than refuses — but
     // it does not log a figure UT cannot be right about without saying so first.
     if (reasons.length > 0 && !profile.allowSuspect.includes(item.itemId)) {
-      b.textContent = `⚠ ${item.name} (${item.portion.raw})`
+      b.append(icon('alert'), document.createTextNode(` ${item.name} (${item.portion.raw})`))
       b.onclick = () => {
         if (!confirm(`UT's figures for ${item.name} do not look right: ${reasons.map((r) => r.message).join('; ')}.\n\nLog it anyway?`)) return
         profile.allowSuspect.push(item.itemId)
         logAte(item.itemId, 1)
-        flash(b, 'Logged ✓')
+        flash(b, 'Logged')
       }
     } else {
       b.textContent = `${item.name} (${item.portion.raw})`
-      b.onclick = () => { logAte(item.itemId, 1); flash(b, 'Logged ✓') }
+      b.onclick = () => { logAte(item.itemId, 1); flash(b, 'Logged') }
     }
     box.append(b)
   }
@@ -872,15 +925,10 @@ function renderUnservable() {
   const gaps = unservableGaps(profile.extraTargets, profile.extras)
   if (gaps.length === 0) return
 
-  const h = document.createElement('h2')
-  h.textContent = "Short on — but J2 doesn't publish these"
-  const note = document.createElement('div')
-  note.className = 'note'
-  note.textContent =
+  box.append(noteBlock('shortfall', "Short on — but J2 doesn't publish these",
     gaps.slice(0, 5).map((g) => `${EXTRA_LABELS[g.key] ?? g.key} (${g.shortBy}% short)`).join(', ') +
     '. UT publishes only vitamin D, calcium, iron and potassium per dish, so the menu ' +
-    'cannot be ranked for these. Supplement or eat off campus.'
-  box.append(h, note)
+    'cannot be ranked for these. Supplement or eat off campus.'))
 }
 
 function renderFuelLine() {
@@ -947,10 +995,10 @@ function renderPrefs() {
     block.innerHTML = '<p class="hint">Nothing blocked yet.</p>'
   }
   for (const term of profile.ingredientBlocklist) {
-    block.append(chip(`${term} ✕`, true, () => {
+    block.append(chip(term, true, () => {
       profile.ingredientBlocklist = profile.ingredientBlocklist.filter((t) => t !== term)
       saveProfile(); renderPrefs(); renderNow()
-    }))
+    }, 'close'))
   }
 
   // Cronometer shows one carbohydrate goal, configured per account as total or net. The
@@ -990,10 +1038,10 @@ function renderPrefs() {
   }
   for (const [id, weight] of entries) {
     const name = menu?.items[id]?.name ?? id
-    rated.append(chip(`${weight > 0 ? '♥' : '✕'} ${name}`, weight > 0, () => {
+    rated.append(chip(name, weight > 0, () => {
       delete profile.itemWeights[id]
       saveProfile(); renderPrefs(); renderNow()
-    }))
+    }, weight > 0 ? 'heart' : 'close'))
   }
 }
 
@@ -1052,10 +1100,41 @@ function restoreSettings(text) {
   return restored
 }
 
-function chip(text, on, onclick) {
+/**
+ * A disclosure block at one of three severities.
+ *
+ * The old UI rendered five different jobs — a missing target, a medical disclaimer, a missed
+ * budget, refused source data, and an unservable nutrient — as one identical grey box, so
+ * nothing told you which mattered. None of the three uses colour: UT's palette forbids red
+ * alongside burnt orange, and a coloured side-border on a callout is its own tell. Weight and
+ * a rule carry the severity instead.
+ *
+ * @param {'blocking'|'shortfall'|'aside'} severity
+ * @param {string|null} label  the eyebrow naming what this is; null for an aside
+ */
+function noteBlock(severity, label, text) {
+  const el = document.createElement('div')
+  el.className = `note ${severity}`
+  if (label) {
+    const eyebrow = document.createElement('span')
+    eyebrow.className = 'eyebrow'
+    eyebrow.textContent = label
+    el.append(eyebrow)
+  }
+  const p = document.createElement('p')
+  p.textContent = text
+  el.append(p)
+  return el
+}
+
+function chip(text, on, onclick, trailing) {
   const b = document.createElement('button')
+  b.type = 'button'
   b.className = on ? 'chip on' : 'chip'
   b.textContent = text
+  // A removable chip carries a real icon rather than a '✕' baked into its own label, which
+  // screen readers used to read out as part of the name.
+  if (trailing) b.append(icon(trailing))
   b.onclick = onclick
   return b
 }
@@ -1266,7 +1345,7 @@ function populateHalls() {
     }
     box.append(b)
   }
-  box.classList.toggle('hidden', menu.halls.length < 2)
+  box.hidden = menu.halls.length < 2
 }
 
 function populateModes() {
@@ -1305,7 +1384,7 @@ async function start() {
     menu = await loadMenu()
   } catch (err) {
     $('#nowempty').textContent = `Could not load the menu (${err.message}). Pull to refresh once you have signal.`
-    $('#nowempty').classList.remove('hidden')
+    $('#nowempty').hidden = false
     return
   }
   populateHalls()

@@ -1,294 +1,510 @@
+/* utdining — the "Panel" visual system. See DESIGN.md for the contract these tokens realize.
+   Palette is the UT Austin brand palette (umac.utexas.edu), chosen and therefore binding.
+   Every colour below is a token; a hex literal outside this block is a bug. */
+
 :root {
-  --bg: #14141a;
-  --card: #1e1e26;
-  --line: #2e2e3a;
-  --ink: #f2f2f5;
-  --dim: #9a9aa8;
-  --accent: #ff7a33;
-  --good: #4ec97e;
-  --warn: #e5c04b;
-  --radius: 14px;
+  color-scheme: light dark;
+
+  /* Warm neutrals from UT's own published web tokens. NOT tints of burnt orange — UT
+     forbids those outright — so the neutrals lean warm without borrowing the brand hue. */
+  --ground: #f1f0eb;
+  --surface: #f9f8f5;
+  --sunken: #e2dfd5;
+  --hairline: #d5d2c8;
+  --rule: #333f48;
+
+  --ink: #333f48;   /* 9.46 on ground */
+  --mute: #5c656d;  /* 5.20 */
+  --faint: #6b6657; /* 5.02 */
+
+  /* Burnt orange is a FILLED REGION, never body text: it measures 4.59 on white and 4.58 on
+     black, clearing AA by under 2%, so any opacity or antialiasing drops it below. */
+  --field: #bf5700;
+  --on-field: #ffffff;      /* documented exception to "no pure white" — warm white fails at 4.41 */
+  --accent-text: #9f4700;   /* a shade, not a tint. 5.45 on ground. */
+  --good: #579d42;          /* fill/dot only — 2.92 as text on ground, fails */
+
+  --t-hero: 2.5rem;
+  --t-title: 1.5rem;
+  --t-body: 1rem;
+  --t-small: 0.8125rem;
+  --t-eyebrow: 0.656rem;
+
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-6: 24px; --s-8: 32px; --s-12: 48px;
+  --r-hairline: 2px;
+  --r-pill: 999px;
+
+  --gutter: var(--s-4);
+  --tabbar: 56px;
+
+  --display: "Avenir Next Condensed", "Helvetica Neue Condensed", "Arial Narrow", sans-serif;
+  --body: "Avenir Next", "Helvetica Neue", sans-serif;
 }
 
-@media (prefers-color-scheme: light) {
+/* Dark re-declares tokens ONLY. No component below carries a dark-mode variant. */
+@media (prefers-color-scheme: dark) {
   :root {
-    --bg: #f6f6f8; --card: #fff; --line: #e2e2e8;
-    --ink: #17171c; --dim: #63636f; --accent: #bf5700;
+    --ground: #1e262b;
+    --surface: #262f35;
+    --sunken: #171d21;
+    --hairline: #3a444b;
+    --rule: #f1f0eb;
+
+    --ink: #f1f0eb;   /* 13.46 */
+    --mute: #9cadb7;  /* 6.64 */
+    --faint: #7d8890;
+
+    /* The field stays burnt orange in both themes. Only the orange *word* changes, because
+       #bf5700 as text on this ground is 3.35 and fails. UT's secondary orange is 6.90. */
+    --accent-text: #f8971f;
+    --good: #a6cd57;
   }
 }
 
 * { box-sizing: border-box; }
 
+/* `hidden` must beat the display rules below, or a flex container ignores it — which is
+   exactly what hid nothing when the hall strip was supposed to disappear. */
+[hidden] { display: none !important; }
+
+/* The icon sprite. Taken out of flow in CSS rather than with a style attribute, which the
+   page's own Content-Security-Policy blocks. */
+.sprite { position: absolute; }
+
+.icon { width: 20px; height: 20px; flex: 0 0 auto; }
+
 body {
   margin: 0;
-  padding: env(safe-area-inset-top) 0 calc(env(safe-area-inset-bottom) + 24px);
-  background: var(--bg);
+  padding: env(safe-area-inset-top) 0 calc(env(safe-area-inset-bottom) + var(--tabbar));
+  background: var(--ground);
   color: var(--ink);
-  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font: var(--t-body)/1.45 var(--body);
   -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
 }
 
-header { padding: 14px 16px 6px; }
+/* Light-on-dark needs the extra leading (design/web). */
+@media (prefers-color-scheme: dark) { body { line-height: 1.5; } }
 
-.picker { display: flex; gap: 8px; }
+/* --- type roles ---------------------------------------------------------- */
 
-select, input, button {
-  font: inherit;
-  color: var(--ink);
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px 12px;
-  min-height: 44px; /* thumb-sized: this gets used one-handed in a queue */
-}
-
-select { flex: 1; appearance: none; }
-
-.fuelline { margin: 10px 2px 0; color: var(--dim); font-size: 14px; }
-
-.tabs {
-  display: flex;
-  gap: 6px;
-  padding: 10px 16px;
-  position: sticky;
-  top: 0;
-  background: var(--bg);
-  z-index: 5;
-}
-
-.tabs button {
-  flex: 1;
-  background: transparent;
-  border-color: transparent;
-  color: var(--dim);
+.display {
+  font-family: var(--display);
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  line-height: 1.05;
   font-weight: 600;
 }
 
-.tabs button.on { background: var(--card); border-color: var(--line); color: var(--ink); }
+.eyebrow {
+  font-size: var(--t-eyebrow);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--faint);
+  font-weight: 600;
+}
 
-main { padding: 4px 16px; }
+/* Every figure in the app. A changing number must not reflow its own row. */
+.num { font-variant-numeric: tabular-nums; }
 
+/* --- structure ----------------------------------------------------------- */
+
+/* The heavy bar. Structural: it means "a different kind of thing follows". */
+.rule { height: 3px; background: var(--rule); }
+
+.gutter { padding-inline: var(--gutter); }
+
+header {
+  padding: var(--s-3) var(--gutter) 0;
+}
+
+.wordmark {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+.wordmark h1 {
+  font-family: var(--display);
+  text-transform: uppercase;
+  font-size: var(--t-title);
+  letter-spacing: 0.02em;
+  margin: 0;
+  font-weight: 700;
+}
+
+.fuelline {
+  margin: var(--s-1) 0 var(--s-3);
+  font-size: var(--t-small);
+  color: var(--mute);
+}
+
+/* --- controls ------------------------------------------------------------ */
+
+select, input, textarea, button {
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-hairline);
+  padding: var(--s-2) var(--s-3);
+  min-height: 44px;
+}
+textarea { width: 100%; }
+
+:focus-visible {
+  outline: 2px solid var(--field);
+  outline-offset: 2px;
+}
+
+button { cursor: pointer; }
+
+button.primary {
+  background: var(--field);
+  border-color: var(--field);
+  color: var(--on-field);
+  font-weight: 600;
+}
+
+button.ghost {
+  background: transparent;
+  border-color: var(--hairline);
+  color: var(--mute);
+}
+
+/* The destructive action must not be the quietest thing on its screen. */
+button.danger {
+  background: transparent;
+  border: 1px solid var(--rule);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Segmented rows. One style, used for the meal/mode/hall selectors. */
+.seg { display: flex; gap: 0; border: 1px solid var(--hairline); border-radius: var(--r-hairline); overflow: hidden; }
+.seg button {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--mute);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  padding: var(--s-2) var(--s-1);
+  min-height: 44px;
+}
+.seg button + button { border-left: 1px solid var(--hairline); }
+.seg button.on { background: var(--field); color: var(--on-field); font-weight: 600; }
+
+.picker { display: flex; gap: var(--s-2); align-items: stretch; margin-bottom: var(--s-3); }
+.picker select { flex: 0 0 auto; }
+.picker .seg { flex: 1; }
+
+.chips { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.chip {
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  color: var(--ink);
+  font-size: var(--t-small);
+  padding: var(--s-2) var(--s-3);
+  min-height: 40px;
+}
+.chip.on { background: var(--field); border-color: var(--field); color: var(--on-field); }
+
+/* --- tab bar: bottom, where a home-screen app's tab bar belongs ---------- */
+
+.tabs {
+  position: fixed;
+  left: 0; right: 0;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid var(--hairline);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.tabs button {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--faint);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: var(--t-eyebrow);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  min-height: var(--tabbar);
+  padding: 0;
+}
+.tabs button.on { color: var(--field); }
+.tabs .icon { width: 22px; height: 22px; }
+
+main { padding-bottom: var(--s-8); }
 .tabpanel { display: none; }
 .tabpanel.on { display: block; }
 
-h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 22px 0 8px; }
-.danger-h { color: var(--dim); }
+/* --- Field: the one loud element per screen ------------------------------ */
 
-.hint { color: var(--dim); font-size: 14px; margin: 0 0 10px; }
-
-.pick {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 14px;
-  margin-bottom: 10px;
+.field {
+  background: var(--field);
+  color: var(--on-field);
+  padding: var(--s-4) var(--gutter) var(--s-6);
 }
-
-.pick h3 { margin: 0; font-size: 18px; }
-
-.station { color: var(--dim); font-size: 13px; margin: 2px 0 8px; }
-
-.amount {
-  display: inline-block;
-  background: var(--accent);
-  color: #fff;
+.field .eyebrow { color: var(--on-field); opacity: 0.85; }
+.field h2 {
+  font-family: var(--display);
+  text-transform: uppercase;
+  font-size: var(--t-title);
+  line-height: 1.05;
+  margin: var(--s-2) 0 var(--s-3);
   font-weight: 700;
-  border-radius: 8px;
-  padding: 4px 10px;
-  margin-bottom: 8px;
 }
-
-.why { color: var(--dim); font-size: 14px; margin: 0 0 10px; }
-
-.caveat { color: var(--warn); font-size: 13px; margin: 0 0 10px; }
-
-.rate { display: flex; gap: 8px; }
-.rate button { flex: 1; background: transparent; }
-.rate button.on { border-color: var(--accent); color: var(--accent); }
-
-/* Hall tabs and mode tabs. Both are segmented rows rather than dropdowns: the answer is one
-   tap, and the options are few enough to show at once. */
-.halltabs, .modetabs { display: flex; gap: 6px; }
-.halltabs { margin-bottom: 8px; }
-.modetabs { flex: 1; }
-.halltabs button, .modetabs button {
-  flex: 1;
-  background: transparent;
-  color: var(--dim);
-  padding: 8px 10px;
-  font-size: 14px;
-  white-space: nowrap;
+.field .amount {
+  display: block;
+  margin-bottom: var(--s-3);
 }
-.halltabs button.on, .modetabs button.on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+/* The count is what you act on holding a tray; the weight is the cross-check. Sizing them
+   apart stops a long portion string from wrapping the hero across two lines. */
+.field .amount .lead {
+  font-family: var(--display);
+  font-size: var(--t-hero);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  display: block;
+}
+.field .amount .rest {
+  font-size: var(--t-small);
+  opacity: 0.9;
+  display: block;
+  margin-top: var(--s-1);
+}
+.field .why { font-size: var(--t-small); opacity: 0.9; margin: 0; }
+.field .caveat { font-size: var(--t-small); opacity: 0.9; margin: var(--s-2) 0 0; }
+.field .actions { margin-top: var(--s-4); }
+.field .actions button {
+  background: var(--on-field);
+  border-color: var(--on-field);
+  color: var(--field);
   font-weight: 600;
 }
-
-/* One big button for the amount you were told, multipliers beside it for anything else.
-   button.primary is full-width by default, which has to be undone inside this row. */
-.ate { display: flex; gap: 8px; align-items: stretch; margin-top: 12px; margin-bottom: 10px; }
-.ate button.primary { width: auto; flex: 1; margin-top: 0; }
-.ate .chip { min-width: 54px; text-align: center; }
-
-/* Feedback without leaving the Now tab — logging a whole tray is several taps in a row. */
-.logstrip {
-  display: flex; align-items: center; gap: 10px;
-  background: var(--card);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius);
-  padding: 10px 14px;
-  margin-bottom: 10px;
-  font-size: 14px;
+.field .actions button.quiet {
+  background: transparent;
+  border-color: color-mix(in oklch, var(--on-field) 55%, transparent);
+  color: var(--on-field);
+  font-weight: 400;
 }
-.logstrip span { flex: 1; }
-.logstrip button.ghost { width: auto; padding: 6px 12px; }
 
-.logrow {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--line);
-  font-size: 14px;
+/* --- Item: a dish as a panel line ---------------------------------------- */
+
+.item {
+  padding: var(--s-4) var(--gutter);
+  border-bottom: 1px solid var(--hairline);
 }
-.logrow span { flex: 1; }
-.logrow button.ghost { width: auto; padding: 6px 12px; }
+.item .head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-3); }
+.item .head .eyebrow { flex: 0 1 auto; min-width: 0; }
+.item h3 {
+  font-family: var(--display);
+  text-transform: uppercase;
+  font-size: 1.25rem;
+  line-height: 1.1;
+  margin: var(--s-1) 0 0;
+  font-weight: 600;
+}
+.item .amount {
+  font-family: var(--display);
+  font-size: 1.25rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-text);
+  font-weight: 600;
+  text-align: right;
+  flex: 0 0 auto;
+}
+.item .why { font-size: var(--t-small); color: var(--mute); margin: var(--s-2) 0 0; }
+.item .caveat { font-size: var(--t-small); color: var(--faint); margin: var(--s-1) 0 0; }
+.item .actions { margin-top: var(--s-3); }
 
-#logsearch { width: 100%; }
+/* Shared action row for Field and Item. */
+.actions { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.actions button { min-height: 44px; padding: var(--s-2) var(--s-3); }
+.actions .mult { min-width: 52px; text-align: center; }
+
+/* --- Ledger: the panel's own row ----------------------------------------- */
+
+.ledger { width: 100%; border-collapse: collapse; }
+.ledger td, .ledger th {
+  padding: var(--s-3) var(--gutter);
+  border-bottom: 1px solid var(--hairline);
+  text-align: left;
+  font-weight: 400;
+}
+.ledger td:last-child, .ledger th:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--display);
+  font-size: 1.0625rem;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--gutter);
+  border-bottom: 1px solid var(--hairline);
+}
+.row .grow { flex: 1; min-width: 0; }
+.row button { min-height: 44px; }
+
+/* --- Section: a gutter block introduced by an eyebrow and a hairline ----- */
+
+.section { padding-top: var(--s-6); }
+.section > .eyebrow {
+  display: block;
+  padding: 0 var(--gutter) var(--s-2);
+  border-bottom: 1px solid var(--hairline);
+}
+.section > .body { padding: var(--s-3) var(--gutter) var(--s-3); }
+/* Inside a section body, a lone control fills the measure. The search box was rendering at
+   its intrinsic width and reading as a stray fragment. */
+.section > .body > input:not([type=file]),
+.section > .body > textarea,
+.section > .body > button { width: 100%; }
+.section > .body > .picker { margin-bottom: 0; }
+.section > .body > .picker input { flex: 1; min-width: 0; }
+.section > .body > .picker button { width: auto; flex: 0 0 auto; }
+
+/* Empty-state and summary lines injected into list containers need the gutter too. */
+/* #loglist sits directly on the section, outside .body, so it needs the gutter itself.
+   #logresults / #rated / #blocklist are already inside .body and must NOT be padded twice. */
+#loglist > .hint, #loglist > .total { padding-inline: var(--gutter); }
+
+.hint { font-size: var(--t-small); color: var(--mute); margin: var(--s-2) 0; }
+
+/* --- Notes: three severities, none of them coloured ---------------------- */
+
+.note { padding: var(--s-3) var(--gutter); }
+.note .eyebrow { display: block; margin-bottom: var(--s-1); }
+.note p { margin: 0; font-size: var(--t-small); }
+
+/* Blocking: something was refused. Heavy rule above. */
+.note.blocking { border-top: 3px solid var(--rule); background: var(--sunken); }
+/* Shortfall: a target was missed, or cannot be scored. Hairline above. */
+.note.shortfall { border-top: 1px solid var(--hairline); background: var(--sunken); }
+/* Aside: context, no rule at all. */
+.note.aside { color: var(--mute); }
+.note.aside p { color: var(--mute); }
 
 .total {
-  border: 1px dashed var(--line);
-  border-radius: var(--radius);
-  padding: 12px 14px;
-  color: var(--dim);
-  font-size: 14px;
+  padding: var(--s-4) var(--gutter);
+  font-size: var(--t-small);
+  color: var(--mute);
+  border-top: 1px solid var(--hairline);
 }
+.total .num { color: var(--ink); }
 
-.empty { color: var(--dim); }
-.hidden { display: none; }
-
-.grid { display: grid; grid-template-columns: 1fr auto; gap: 8px 10px; align-items: center; }
-.grid label { color: var(--dim); font-size: 14px; }
-.grid input { width: 7.5em; text-align: right; }
-
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; width: 100%; margin-top: 12px; }
-button.ghost { background: transparent; color: var(--dim); width: 100%; }
-
-.inline { display: flex; gap: 8px; margin-top: 8px; }
-.inline input { flex: 1; }
-.inline button { width: auto; margin: 0; }
-
-.chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 8px 14px;
-  min-height: 40px;
+.logstrip {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--gutter);
+  background: var(--sunken);
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--t-small);
 }
-.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.logstrip span { flex: 1; }
+.logstrip button { min-height: 40px; padding: var(--s-1) var(--s-3); }
+
+.empty { padding: var(--s-8) var(--gutter); color: var(--mute); font-size: var(--t-small); }
+
+.grid { display: grid; grid-template-columns: 1fr auto; gap: var(--s-2) var(--s-3); align-items: center; padding: 0 var(--gutter); }
+.grid label { font-size: var(--t-small); color: var(--mute); }
+.grid input { width: 7.5rem; text-align: right; font-variant-numeric: tabular-nums; }
+
+.status { font-size: var(--t-small); min-height: 1.4em; padding: 0 var(--gutter); color: var(--mute); }
+.status.ok { color: var(--ink); font-weight: 600; }
+/* Deliberately not red: UT forbids red alongside burnt orange, so failure is carried by
+   weight and a rule rather than by hue. */
+.status.bad { color: var(--ink); font-weight: 600; border-left: 0; }
 
 .drop {
   display: block;
+  margin: var(--s-3) var(--gutter);
+  padding: var(--s-4);
+  border: 1px solid var(--hairline);
+  background: var(--sunken);
   text-align: center;
-  border: 1px dashed var(--line);
-  border-radius: var(--radius);
-  padding: 22px;
-  color: var(--dim);
+  font-size: var(--t-small);
+  color: var(--mute);
+  min-height: 44px;
 }
 
-.status { font-size: 14px; min-height: 1.4em; }
-.status.ok { color: var(--good); }
-.status.bad { color: var(--accent); }
+details { padding: 0 var(--gutter); }
+summary { min-height: 44px; display: flex; align-items: center; }
 
-table { width: 100%; border-collapse: collapse; font-size: 15px; }
-td { padding: 7px 0; border-bottom: 1px solid var(--line); }
-td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
-
-.note { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin-top: 10px; font-size: 14px; }
+/* --- dialogs ------------------------------------------------------------- */
 
 dialog {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--card);
+  border: 0;
+  border-top: 3px solid var(--rule);
+  background: var(--ground);
   color: var(--ink);
-  width: min(92vw, 420px);
-  padding: 18px;
+  width: min(100vw, 480px);
+  max-height: 92vh;
+  padding: 0 0 var(--s-4);
+  margin: auto auto 0;
 }
-dialog::backdrop { background: #000a; }
-dialog h3 { margin: 0 0 6px; }
-dialog input { width: 100%; }
-dialog menu { display: flex; gap: 8px; padding: 0; margin: 14px 0 0; }
-dialog menu button { flex: 1; width: auto; margin: 0; }
-
-button.copy {
-  width: 100%;
-  background: transparent;
-  border-style: dashed;
-  color: var(--dim);
-  font-size: 14px;
-  min-height: 40px;
-  margin-bottom: 8px;
+dialog::backdrop { background: color-mix(in oklch, #333f48 72%, transparent); }
+dialog h3 {
+  font-family: var(--display);
+  text-transform: uppercase;
+  font-size: var(--t-title);
+  margin: var(--s-4) var(--gutter) var(--s-2);
+  font-weight: 700;
 }
+dialog .hint, dialog p { padding-inline: var(--gutter); }
+dialog .hint { padding-inline: var(--gutter); }
+dialog input { width: calc(100% - 2 * var(--gutter)); margin-inline: var(--gutter); }
+dialog menu { display: flex; gap: var(--s-2); padding: var(--s-4) var(--gutter) 0; margin: 0; }
+dialog menu button { flex: 1; }
 
-#pastefallback { margin-top: 12px; }
+/* --- Cronometer sheet ---------------------------------------------------- */
 
-/* The Cronometer Custom Food form, one row per field. The value sits on the right as a
-   tappable chip so the whole sheet reads as a checklist to work down while typing. */
-#cronofields { max-height: 46vh; overflow-y: auto; margin: 10px 0; }
+#cronofields { max-height: 44vh; overflow-y: auto; margin: var(--s-3) 0; }
 .cronorow {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 0;
-  border-bottom: 1px solid var(--line);
-  font-size: 15px;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--gutter);
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--t-small);
 }
-.cronolabel { flex: 1; }
-.cronorow .chip { font-variant-numeric: tabular-nums; }
-.cronoblank { color: var(--dim); font-size: 13px; text-align: right; }
-#cronofallback textarea { width: 100%; }
+.cronolabel { flex: 1; color: var(--mute); }
+.cronorow .chip { font-variant-numeric: tabular-nums; min-height: 40px; }
+.cronoblank { color: var(--faint); font-size: var(--t-eyebrow); letter-spacing: 0.08em; text-transform: uppercase; text-align: right; }
 
-/* A dish blocked because UT's own figures cannot be right. Deliberately quiet — it is a
-   footnote under the picks, not an alarm. */
-.blockedrow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 0;
-  border-bottom: 1px solid var(--line);
-  font-size: 14px;
-  color: var(--dim);
-}
-.blockedrow span { flex: 1; }
-.blockedrow button.ghost { width: auto; padding: 6px 12px; flex-shrink: 0; }
-
-/* The generated Nutrition Facts label. White border on purpose: the panel is white and the
-   app is dark, and without it the label's own edge is invisible. */
 .labelimg {
   display: block;
   width: 100%;
-  max-width: 100%;
-  margin: 10px 0;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #fff;
+  margin: var(--s-3) 0;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
 }
 a.download {
   display: block;
   text-align: center;
-  padding: 11px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  padding: var(--s-3);
+  border: 1px solid var(--hairline);
   color: var(--ink);
   text-decoration: none;
+  min-height: 44px;
 }
-#labelspike { margin: 12px 0; }
-#labelspike.hidden { display: none; }
-#pastefallback summary { cursor: pointer; }
-#pastebox {
-  width: 100%;
-  margin-top: 8px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
+
+/* --- motion: near zero, by frequency gate. This app is open for four seconds. --- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .logstrip { transition: background 160ms ease-out; }
 }

@@ -3,13 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#1b1b1f">
+<!-- Matches --surface so the status bar is not a third colour claiming to be the background. -->
+<meta name="theme-color" content="#f9f8f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#262f35" media="(prefers-color-scheme: dark)">
 <!-- img-src allows blob: for the generated Nutrition Facts label only. The image is drawn on
      a canvas from menu.json and never leaves the phone; blob: cannot name a remote origin, so
      this does not widen what the page can fetch. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>J2</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
@@ -18,112 +20,186 @@
 </head>
 <body>
 
+<!-- One icon family: 24px grid, 1.8 stroke, square caps, mitre joins. No unicode stand-ins. -->
+<svg class="sprite" width="0" height="0" aria-hidden="true">
+  <defs>
+    <g id="i-tray" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+      <path d="M3 11h18l-2.2 8H5.2L3 11Z"/><path d="M7 11V7h10v4"/><path d="M9.5 15h5"/>
+    </g>
+    <g id="i-gauge" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+      <path d="M4 19V10"/><path d="M9.3 19V5"/><path d="M14.7 19v-6"/><path d="M20 19V8"/>
+    </g>
+    <g id="i-sliders" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+      <path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>
+      <path d="M9 5v4"/><path d="M16 10v4"/><path d="M7 15v4"/>
+    </g>
+    <g id="i-close" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+      <path d="M6 6l12 12"/><path d="M18 6L6 18"/>
+    </g>
+    <g id="i-check" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+      <path d="M5 12.5l4.5 4.5L19 7"/>
+    </g>
+    <g id="i-alert" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+      <path d="M12 4l9 16H3l9-16Z"/><path d="M12 10v4"/><path d="M12 17h.01"/>
+    </g>
+    <g id="i-heart" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+      <path d="M12 20S3.5 14.5 3.5 9A4.5 4.5 0 0 1 12 7a4.5 4.5 0 0 1 8.5 2c0 5.5-8.5 11-8.5 11Z"/>
+    </g>
+  </defs>
+</svg>
+
 <header>
-  <div id="halltabs" class="halltabs hidden" role="tablist" aria-label="Dining hall"></div>
-  <div class="picker">
-    <select id="meal" aria-label="Meal"></select>
-    <div id="modetabs" class="modetabs" role="tablist" aria-label="What you're eating"></div>
+  <div class="wordmark">
+    <h1>J2</h1>
+    <div id="halltabs" class="seg" role="tablist" aria-label="Dining hall"></div>
   </div>
   <p id="fuelline" class="fuelline">—</p>
+  <div class="picker">
+    <select id="meal" aria-label="Meal"></select>
+    <div id="modetabs" class="seg" role="tablist" aria-label="What you're eating"></div>
+  </div>
 </header>
 
-<nav class="tabs" role="tablist">
-  <button role="tab" class="on" data-tab="now">Now</button>
-  <button role="tab" data-tab="fuel">Fuel</button>
-  <button role="tab" data-tab="prefs">Prefs</button>
-</nav>
+<div class="rule"></div>
 
 <main>
   <section id="now" class="tabpanel on">
-    <div id="logstrip" class="logstrip hidden"></div>
+    <div id="logstrip" class="logstrip" hidden></div>
     <div id="picks"></div>
-    <p id="nowempty" class="empty hidden"></p>
+    <p id="nowempty" class="empty" hidden></p>
     <div id="blocked"></div>
   </section>
 
   <section id="fuel" class="tabpanel">
-    <h2>Logged in the app</h2>
-    <p class="hint">Tap <b>Ate it</b> on a pick and it lands here. This is added on top of
-      whatever you import below — Cronometer never sees it unless you type it in yourself.</p>
-    <div id="loglist"></div>
-    <button id="clearlog" class="ghost hidden">Clear — I've entered these in Cronometer</button>
+    <div class="section">
+      <span class="eyebrow">Logged in the app</span>
+      <div class="body">
+        <p class="hint">Tap <b>Ate it</b> on a pick and it lands here. This is added on top of
+          whatever you import below — Cronometer never sees it unless you type it in yourself.</p>
+      </div>
+      <div id="loglist"></div>
+      <div class="body"><button id="clearlog" class="ghost" hidden>Clear — I've entered these in Cronometer</button></div>
+    </div>
 
-    <h2>Log something else</h2>
-    <input id="logsearch" placeholder="chicken" aria-label="Find a dish on today's menu">
-    <div class="chips" id="logresults"></div>
+    <div class="section">
+      <span class="eyebrow">Log something else</span>
+      <div class="body">
+        <input id="logsearch" placeholder="chicken" aria-label="Find a dish on today's menu">
+        <div class="chips" id="logresults"></div>
+      </div>
+    </div>
 
-    <h2>What you've eaten today</h2>
-    <p class="hint">
-      Export <b>Daily Nutrition</b> from cronometer.com (Profile → Your Account → Export Data)
-      and drop the file here. It is read on this phone and never uploaded.
-    </p>
-    <button id="health" class="primary">Import from Shortcut</button>
-    <p class="hint">Run the <b>Cronometer Today</b> Shortcut first — it reads today's totals
-      out of Apple Health and copies them. Setup: <code>docs/SHORTCUT.md</code> in the repo.</p>
+    <div class="section">
+      <span class="eyebrow">What you've eaten today</span>
+      <div class="body">
+        <p class="hint">
+          Export <b>Daily Nutrition</b> from cronometer.com (Profile, then Your Account, then
+          Export Data) and drop the file here. It is read on this phone and never uploaded.
+        </p>
+        <button id="health" class="primary">Import from Shortcut</button>
+        <p class="hint">Run the <b>Cronometer Today</b> Shortcut first — it reads today's totals
+          out of Apple Health and copies them. Setup: <code>docs/SHORTCUT.md</code> in the repo.</p>
+      </div>
 
-    <label class="drop" id="drop">
-      <input type="file" id="csv" accept=".csv,text/csv" hidden>
-      <span>Or choose a Cronometer CSV</span>
-    </label>
-    <p id="csvstatus" class="status"></p>
+      <label class="drop" id="drop">
+        <input type="file" id="csv" accept=".csv,text/csv" hidden>
+        <span>Or choose a Cronometer CSV</span>
+      </label>
+      <p id="csvstatus" class="status"></p>
 
-    <details id="pastefallback">
-      <summary class="hint">Clipboard blocked? Paste it here</summary>
-      <textarea id="pastebox" rows="4" aria-label="Shortcut output"></textarea>
-      <button id="pastego" class="ghost">Import pasted text</button>
-    </details>
+      <details id="pastefallback">
+        <summary class="hint">Clipboard blocked? Paste it here</summary>
+        <textarea id="pastebox" rows="4" aria-label="Shortcut output"></textarea>
+        <button id="pastego" class="ghost">Import pasted text</button>
+      </details>
+    </div>
 
-    <h2>Or type it</h2>
-    <div class="grid" id="manual"></div>
-    <button id="savemanual" class="primary">Save what I've eaten</button>
+    <div class="section">
+      <span class="eyebrow">Or type it</span>
+      <div class="body"></div>
+      <div class="grid" id="manual"></div>
+      <div class="body"><button id="savemanual" class="primary">Save what I've eaten</button></div>
+    </div>
 
-    <h2>Left today</h2>
-    <table id="remaining"></table>
+    <div class="section">
+      <span class="eyebrow">Left today</span>
+      <table id="remaining" class="ledger"></table>
+    </div>
 
     <div id="unservable"></div>
   </section>
 
   <section id="prefs" class="tabpanel">
-    <h2>Don't show me</h2>
-    <div class="chips" id="restrictions"></div>
+    <div class="section">
+      <span class="eyebrow">Don't show me</span>
+      <div class="body"><div class="chips" id="restrictions"></div></div>
+    </div>
 
-    <h2>Ingredients to avoid</h2>
-    <p class="hint">Any dish whose published ingredients mention these is hidden, including
-      ones you've never seen.</p>
-    <div class="chips" id="blocklist"></div>
-    <form id="addblock" class="inline">
-      <input id="blockinput" placeholder="mushroom" aria-label="Ingredient to avoid">
-      <button class="primary">Add</button>
-    </form>
+    <div class="section">
+      <span class="eyebrow">Ingredients to avoid</span>
+      <div class="body">
+        <p class="hint">Any dish whose published ingredients mention these is hidden, including
+          ones you've never seen.</p>
+        <div class="chips" id="blocklist"></div>
+        <form id="addblock" class="picker">
+          <input id="blockinput" placeholder="mushroom" aria-label="Ingredient to avoid">
+          <button class="primary">Add</button>
+        </form>
+      </div>
+    </div>
 
-    <h2>Targets</h2>
-    <p class="hint">Pulled from your Cronometer targets. A target of 0 means "don't score it".</p>
-    <p class="hint">Which carbohydrate figure is your Cronometer goal? Check the number on
-      Cronometer's targets page — if it says <b>Net Carbs</b>, pick that. Getting this wrong
-      compares your goal against a different quantity all day.</p>
-    <div class="chips" id="carbbasis"></div>
-    <div class="grid" id="targets"></div>
-    <button id="savetargets" class="primary">Save targets</button>
+    <div class="section">
+      <span class="eyebrow">Targets</span>
+      <div class="body">
+        <p class="hint">Pulled from your Cronometer targets. A target of 0 means "don't score it".</p>
+        <p class="hint">Which carbohydrate figure is your Cronometer goal? Check the number on
+          Cronometer's targets page — if it says <b>Net Carbs</b>, pick that. Getting this wrong
+          compares your goal against a different quantity all day.</p>
+        <div class="chips" id="carbbasis"></div>
+      </div>
+      <div class="grid" id="targets"></div>
+      <div class="body"><button id="savetargets" class="primary">Save targets</button></div>
+    </div>
 
-    <h2>Rated foods</h2>
-    <div id="rated"></div>
+    <div class="section">
+      <span class="eyebrow">Rated foods</span>
+      <div class="body"><div id="rated"></div></div>
+    </div>
 
-    <h2>Backup</h2>
-    <p class="hint">Targets, filters and ratings live only on this phone. iOS clears storage
-      for sites it has not seen in a while, and the home-screen app and Safari keep separate
-      copies — so keep this text somewhere you can paste it back from.</p>
-    <button id="copysettings" class="ghost">Copy my settings</button>
-    <details id="restorebox">
-      <summary class="hint">Restore from a backup</summary>
-      <textarea id="restoretext" rows="4" aria-label="Settings backup"></textarea>
-      <button id="restorego" class="ghost">Restore these settings</button>
-    </details>
-    <p id="backupstatus" class="status"></p>
+    <div class="section">
+      <span class="eyebrow">Backup</span>
+      <div class="body">
+        <p class="hint">Targets, filters and ratings live only on this phone. iOS clears storage
+          for sites it has not seen in a while, and the home-screen app and Safari keep separate
+          copies — so keep this text somewhere you can paste it back from.</p>
+        <button id="copysettings" class="ghost">Copy my settings</button>
+      </div>
+      <details id="restorebox">
+        <summary class="hint">Restore from a backup</summary>
+        <textarea id="restoretext" rows="4" aria-label="Settings backup"></textarea>
+        <button id="restorego" class="ghost">Restore these settings</button>
+      </details>
+      <p id="backupstatus" class="status"></p>
+    </div>
 
-    <h2 class="danger-h">Reset</h2>
-    <button id="reset" class="ghost">Clear everything on this phone</button>
+    <div class="section">
+      <span class="eyebrow">Reset</span>
+      <div class="body"><button id="reset" class="danger">Clear everything on this phone</button></div>
+    </div>
   </section>
 </main>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" class="on" data-tab="now">
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-tray"/></svg>Now
+  </button>
+  <button role="tab" data-tab="fuel">
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-gauge"/></svg>Fuel
+  </button>
+  <button role="tab" data-tab="prefs">
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sliders"/></svg>Prefs
+  </button>
+</nav>
 
 <dialog id="cronodlg">
   <form method="dialog">
@@ -132,6 +208,7 @@
       separate boxes — so this is one tap per field, typed in by you. Tap a value to copy it.</p>
     <p id="cronoservings" class="hint"></p>
     <div id="cronofields"></div>
+    <p id="cronostatus" class="status"></p>
 
     <details id="labelspike">
       <summary class="hint">Try the label photo instead (experiment)</summary>
@@ -144,7 +221,6 @@
       <p id="labelstatus" class="status"></p>
     </details>
 
-    <p id="cronostatus" class="status"></p>
     <details id="cronofallback">
       <summary class="hint">Clipboard blocked? Copy the whole block by hand</summary>
       <textarea id="cronotext" rows="6" aria-label="Nutrition reference"></textarea>
