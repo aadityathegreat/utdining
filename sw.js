@@ -1,5 +1,5 @@
 // Offline cache. J2's basement has no signal and the app has to open anyway.
-const CACHE = 'utdining-v7'
+const CACHE = 'utdining-v8'
 const SHELL = [
   './', 'index.html', 'style.css', 'app.js',
   'recommend.mjs', 'cronometer.mjs', 'nutrition.mjs', 'label.mjs', 'manifest.json',

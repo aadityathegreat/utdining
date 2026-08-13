@@ -55,7 +55,13 @@ const CEILING = {
   kcal: 1500,
   sodium_mg: 8000,
   chol_mg: 1500,
-  iron_mg: 45, // the adult tolerable upper limit; fortified cereal tops out near 18 mg
+  // 25, not the 45 mg adult upper limit. At 45 two implausible figures walked through: Fast
+  // Line Chili Bar Topping at 38.6 mg, and Pancakes at 32.3 mg sitting on the same menu as a
+  // second Pancakes recipe listing 0.8 mg. The bad figure was not inert — it made Pancakes the
+  // top-ranked breakfast pick, explained to the user as "+32.3 mg iron". Sorted by iron the
+  // real menu goes 251.3, 217.3, 77.1, 38.6, 32.3, then falls to 16.5 and 16.4, both under the
+  // 18 mg daily value. The gap between 32 and 17 is where this belongs.
+  iron_mg: 25,
   calcium_mg: 2500,
   potassium_mg: 6000,
   vitd_mcg: 250,

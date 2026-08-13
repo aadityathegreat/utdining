@@ -133,3 +133,17 @@ test('the quarantine stays a rare event on real UT data', () => {
     `${flagged.length} of ${items.length} dishes quarantined — the rules are too tight`)
   assert.ok(flagged.length > 0, 'UT really does publish bad figures; catching none means the wiring broke')
 })
+
+test('the iron ceiling sits in the gap real UT data leaves', () => {
+  // Sorted by iron, the real menu runs 251.3, 217.3, 77.1, 38.6, 32.3 and then falls to 16.5
+  // and 16.4 — both under the 18 mg daily value and both plausible. The ceiling belongs in
+  // that gap. At 45 the 38.6 and 32.3 figures walked through, and the 32.3 one was not inert:
+  // it made Pancakes the top-ranked breakfast pick, sold as "+32.3 mg iron".
+  const w = { raw: '1 each', qty: 1, unit: 'each', unitClass: 'count', grams: null }
+  const iron = (mg) => suspectReasons(ok({ iron_mg: mg }), w).some((r) => r.code === 'ceiling:iron_mg')
+
+  assert.ok(iron(32.3), 'Pancakes at 32.3 mg must be caught')
+  assert.ok(iron(38.6), 'Chili Bar Topping at 38.6 mg must be caught')
+  assert.ok(!iron(16.5), 'a plausible 16.5 mg must not be')
+  assert.ok(!iron(18), 'the daily value itself is not suspect')
+})
