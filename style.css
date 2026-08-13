@@ -7,15 +7,15 @@
 
   /* Warm neutrals from UT's own published web tokens. NOT tints of burnt orange — UT
      forbids those outright — so the neutrals lean warm without borrowing the brand hue. */
-  --ground: #f1f0eb;
-  --surface: #f9f8f5;
-  --sunken: #e2dfd5;
-  --hairline: #d5d2c8;
+  --ground: #f4f1e9;
+  --surface: #fbf9f4;
+  --sunken: #e6e2d6;
+  --hairline: #d8d3c6;
   --rule: #333f48;
 
-  --ink: #333f48;   /* 9.46 on ground */
-  --mute: #5c656d;  /* 5.20 */
-  --faint: #6b6657; /* 5.02 */
+  --ink: #333f48;   /* 9.56 on ground */
+  --mute: #5c656d;  /* 5.26 */
+  --faint: #6b6657; /* 5.08 */
 
   /* Burnt orange is a FILLED REGION, never body text: it measures 4.59 on white and 4.58 on
      black, clearing AA by under 2%, so any opacity or antialiasing drops it below. */
@@ -44,15 +44,18 @@
 /* Dark re-declares tokens ONLY. No component below carries a dark-mode variant. */
 @media (prefers-color-scheme: dark) {
   :root {
-    --ground: #1e262b;
-    --surface: #262f35;
-    --sunken: #171d21;
-    --hairline: #3a444b;
+    /* Warm, not UT's blue-grey #333f48 family: at night the cool ground read clinical, which
+       is the one risk this design took. Shades of UT's warm tertiary neutral instead — the
+       grammar stays a panel, the room it sits in stops being a laboratory. */
+    --ground: #22211d;
+    --surface: #2b2a25;
+    --sunken: #1a1915;
+    --hairline: #403e37;
     --rule: #f1f0eb;
 
-    --ink: #f1f0eb;   /* 13.46 */
-    --mute: #9cadb7;  /* 6.64 */
-    --faint: #7d8890;
+    --ink: #f1f0eb;   /* 14.12 */
+    --mute: #b0a99a;  /* 6.90 */
+    --faint: #948d80; /* 4.90 — #8a8478 measured 4.34 and failed */
 
     /* The field stays burnt orange in both themes. Only the orange *word* changes, because
        #bf5700 as text on this ground is 3.35 and fails. UT's secondary orange is 6.90. */
@@ -110,7 +113,7 @@ body {
 /* --- structure ----------------------------------------------------------- */
 
 /* The heavy bar. Structural: it means "a different kind of thing follows". */
-.rule { height: 3px; background: var(--rule); }
+.rule { height: 1px; background: var(--hairline); }
 
 .gutter { padding-inline: var(--gutter); }
 
@@ -253,7 +256,7 @@ main { padding-bottom: var(--s-8); }
 .field {
   background: var(--field);
   color: var(--on-field);
-  padding: var(--s-4) var(--gutter) var(--s-6);
+  padding: var(--s-6) var(--gutter) var(--s-6);
 }
 .field .eyebrow { color: var(--on-field); opacity: 0.85; }
 .field h2 {
@@ -302,7 +305,7 @@ main { padding-bottom: var(--s-8); }
 /* --- Item: a dish as a panel line ---------------------------------------- */
 
 .item {
-  padding: var(--s-4) var(--gutter);
+  padding: var(--s-4) var(--gutter) var(--s-4);
   border-bottom: 1px solid var(--hairline);
 }
 .item .head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-3); }

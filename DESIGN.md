@@ -215,6 +215,13 @@ field, not a pill" rule above; the numbers arrived at the same place independent
 Light theme is the primary target: the servery is brightly lit, and UT's palette is built for
 light grounds — burnt orange fails as text on UT's own dark gray (2.35:1).
 
+**Both grounds are warm.** The first build used UT's blue-grey `#1e262b` for the dark ground,
+and it was the coldest surface in the palette — it turned the panel grammar clinical, which was
+the one risk this design named up front. Rebuilt from shades of UT's warm tertiary neutral. The
+remedy the concept called for was warmth in the colour field rather than a retreat to cards, and
+that is what this is. `--faint` had to be lightened to `#948d80` in the process: the first warm
+value measured 4.34 and failed AA.
+
 | Pair | Ratio | AA normal |
 |---|---|---|
 | ink `#333f48` on ground `#f1f0eb` | 9.46 | pass |
@@ -222,10 +229,11 @@ light grounds — burnt orange fails as text on UT's own dark gray (2.35:1).
 | faint `#6b6657` on ground | 5.02 | pass |
 | orange text `#9f4700` on ground | 5.45 | pass |
 | white on field `#bf5700` | 4.59 | pass |
-| **dark** ink `#f1f0eb` on ground `#1e262b` | 13.46 | pass |
-| **dark** mute `#9cadb7` on ground | 6.64 | pass |
-| **dark** orange text `#f8971f` on ground | 6.90 | pass |
-| ~~dark: burnt `#bf5700` as text on dark ground~~ | 3.35 | **fail — do not** |
+| **dark** ink `#f1f0eb` on ground `#22211d` | 14.12 | pass |
+| **dark** mute `#b0a99a` on ground | 6.90 | pass |
+| **dark** faint `#948d80` on ground | 4.90 | pass |
+| **dark** orange text `#f8971f` on ground | 7.24 | pass |
+| ~~dark: burnt `#bf5700` as text on dark ground~~ | 3.51 | **fail — do not** |
 | ~~green `#579d42` as text on light ground~~ | 2.92 | **fail — field/dot only** |
 
 **One documented exception to `detect` tell 2 (no pure white).** Text on the burnt-orange field
@@ -238,14 +246,14 @@ its own, so the audit above is the governing document for this app.
 
 | Token | Light | Dark | Role |
 |---|---|---|---|
-| `--ground` | `#f1f0eb` | `#1e262b` | page background — warm paper / UT dark |
-| `--surface` | `#f9f8f5` | `#262f35` | the raised region inside a panel |
-| `--sunken` | `#e2dfd5` | `#171d21` | recessed: inputs, wells |
-| `--rule` | `#333f48` | `#f1f0eb` | the heavy structural bar |
-| `--hairline` | `#d5d2c8` | `#3a444b` | the row separator |
+| `--ground` | `#f4f1e9` | `#22211d` | page background — warm paper both ways |
+| `--surface` | `#fbf9f4` | `#2b2a25` | the raised region inside a panel |
+| `--sunken` | `#e6e2d6` | `#1a1915` | recessed: inputs, wells |
+| `--rule` | `#333f48` | `#f1f0eb` | the structural bar |
+| `--hairline` | `#d8d3c6` | `#403e37` | the row separator |
 | `--ink` | `#333f48` | `#f1f0eb` | primary text |
-| `--mute` | `#5c656d` | `#9cadb7` | secondary text, the reason line |
-| `--faint` | `#6b6657` | `#7d8890` | eyebrow labels, disabled |
+| `--mute` | `#5c656d` | `#b0a99a` | secondary text, the reason line |
+| `--faint` | `#6b6657` | `#948d80` | eyebrow labels, disabled |
 | `--field` | `#bf5700` | `#bf5700` | **burnt orange, filled region only** — one per screen |
 | `--on-field` | `#ffffff` | `#ffffff` | text on that field (the documented exception) |
 | `--accent-text` | `#9f4700` | `#f8971f` | the rare orange *word*; a shade in light, UT's secondary in dark |
