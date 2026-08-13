@@ -7,6 +7,7 @@ import {
   parseCronometerCsv, datesInCsv, parseHealthPayload, EXTRA_LABELS, CronometerParseError,
 } from './cronometer.mjs'
 import { suspectOf } from './nutrition.mjs'
+import { labelModel, labelBlob } from './label.mjs'
 
 const PROFILE_KEY = 'utdining.profile'
 
@@ -430,10 +431,23 @@ function openCronometerSheet(item, servings) {
   $('#crononame').textContent = item.name
   $('#cronoservings').textContent = `Create it once, then log ${Math.round(servings * 100) / 100} × this serving.`
 
+  // Overridden dishes reach this sheet, so the override has to travel with them. It is
+  // honoured and disclosed rather than silently obeyed: the numbers are still UT's bad ones.
+  const allowSuspect = profile.allowSuspect.includes(item.itemId)
+  const suspect = suspectOf(item)
+  if (allowSuspect && suspect.length > 0) {
+    status.textContent = `You overrode this dish. UT still publishes ${suspect.map((s) => s.message).join('; ')} — `
+      + 'check these against the real food before saving them in Cronometer.'
+    status.className = 'status bad'
+  }
+
+  wireLabelSpike(item, allowSuspect)
+
   let fields
   try {
-    fields = cronometerFields(item, servings)
+    fields = cronometerFields(item, servings, { allowSuspect })
   } catch (err) {
+    $('#labelspike').classList.add('hidden')
     if (!(err instanceof SuspectItemError)) throw err
     status.textContent = `${err.message} Copying it would put a wrong number in your diary.`
     status.className = 'status bad'
@@ -483,11 +497,11 @@ function openCronometerSheet(item, servings) {
 
   $('#cronoall').onclick = async () => {
     try {
-      await navigator.clipboard.writeText(cronometerEntry(item, servings))
+      await navigator.clipboard.writeText(cronometerEntry(item, servings, { allowSuspect }))
       status.textContent = 'Copied the whole block. It is a reference to type from, not an import.'
       status.className = 'status ok'
     } catch {
-      $('#cronotext').value = cronometerEntry(item, servings)
+      $('#cronotext').value = cronometerEntry(item, servings, { allowSuspect })
       $('#cronofallback').open = true
       status.textContent = 'Clipboard blocked — select the text below instead.'
       status.className = 'status bad'
@@ -496,6 +510,117 @@ function openCronometerSheet(item, servings) {
 
   dlg.showModal()
 }
+
+// The label-photo spike. Cronometer's scanner is the only route left that could fill every
+// field from one action, so this draws an Updated American panel from UT's figures and hands
+// it to the iOS share sheet. Nobody has yet confirmed Cronometer accepts an image made this
+// way — the UI calls it an experiment for that reason, and the field list above stays the
+// supported path until the round trip is proven.
+let labelUrl = null
+
+function wireLabelSpike(item, allowSuspect = false) {
+  const make = $('#labelmake')
+  const out = $('#labelout')
+  const status = $('#labelstatus')
+
+  // A previous dish's image would otherwise sit there looking like this one's.
+  releaseLabel()
+  out.innerHTML = ''
+  status.textContent = ''
+  status.className = 'status'
+  $('#labelspike').open = false
+  // Shown by default and hidden again by the caller for a quarantined dish, which has no
+  // honest label to draw.
+  $('#labelspike').classList.remove('hidden')
+
+  make.onclick = async () => {
+    out.innerHTML = ''
+    status.className = 'status'
+    let model
+    try {
+      model = labelModel(item, { allowSuspect })
+    } catch (err) {
+      status.textContent = err.message
+      status.className = 'status bad'
+      return
+    }
+
+    let blob
+    try {
+      blob = await labelBlob(model)
+    } catch (err) {
+      status.textContent = `Could not draw the label: ${err.message}`
+      status.className = 'status bad'
+      return
+    }
+
+    releaseLabel()
+    labelUrl = URL.createObjectURL(blob)
+
+    const img = document.createElement('img')
+    img.className = 'labelimg'
+    img.src = labelUrl
+    img.alt = `Nutrition Facts label for ${item.name}`
+    out.append(img)
+
+    const file = new File([blob], `${slug(item.name)}-nutrition.png`, { type: 'image/png' })
+
+    // Share sheet first: on iOS that is the route to Save Image, and from Photos the
+    // Cronometer scanner can pick it up. canShare is checked with the actual file because
+    // Safari advertises navigator.share while refusing file payloads.
+    if (navigator.canShare?.({ files: [file] })) {
+      const share = document.createElement('button')
+      share.type = 'button'
+      share.className = 'primary'
+      share.textContent = 'Save or share the image'
+      share.onclick = async () => {
+        try {
+          await navigator.share({ files: [file] })
+        } catch (err) {
+          // A cancelled share sheet is not a failure and must not read as one.
+          if (err?.name === 'AbortError') return
+          status.textContent = 'Sharing was refused — long-press the image and Save to Photos.'
+          status.className = 'status bad'
+        }
+      }
+      out.append(share)
+    } else {
+      const link = document.createElement('a')
+      link.className = 'ghost download'
+      link.href = labelUrl
+      link.download = file.name
+      link.textContent = 'Download the image'
+      out.append(link)
+      status.textContent = 'This browser will not share files. Download it, or long-press the image.'
+    }
+
+    // Naming the omissions beside the image matters more here than anywhere else: a scanner
+    // silently leaves a missing field empty, and without this there is nothing to tell you
+    // whether the blank came from UT or from the scan.
+    if (model.omitted.length > 0) {
+      const note = document.createElement('p')
+      note.className = 'hint'
+      note.textContent = `UT publishes no ${model.omitted.join(', ')} for this dish, so those `
+        + 'rows are absent from the label rather than printed as zero. Leave them blank in '
+        + 'Cronometer too.'
+      out.append(note)
+    }
+
+    const ask = document.createElement('p')
+    ask.className = 'hint'
+    ask.textContent = 'Now try it: Cronometer → Add Food → the camera / scan-a-label option → '
+      + 'pick this image from Photos. If it fills the form, check every value against the '
+      + 'fields above before saving.'
+    out.append(ask)
+  }
+}
+
+function releaseLabel() {
+  if (labelUrl) URL.revokeObjectURL(labelUrl)
+  labelUrl = null
+}
+
+const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'dish'
 
 /** Dishes on today's menu that the plausibility checks blocked, with UT's exact figures. */
 function renderBlocked(items) {
@@ -1071,6 +1196,10 @@ $('#reset').onclick = () => {
   profile = loadProfile()
   renderPrefs(); renderFuel(); renderNow()
 }
+
+// A blob URL is held alive by the document until it is revoked, and a full-size PNG per dish
+// adds up over a tray's worth of picks.
+$('#cronodlg').onclose = releaseLabel
 
 $('#notedlg').onclose = () => {
   const dlg = $('#notedlg')

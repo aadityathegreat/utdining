@@ -352,3 +352,12 @@ test('what a logged dish delivers includes its net carbs', () => {
   assert.equal(delivered.carb_g, 48)
   assert.equal(delivered.netcarb_g, 30)
 })
+
+test('the override reaches the Cronometer copy, not just the plate', () => {
+  // Without this, "Use it anyway" returned a dish to the picks and then refused to hand over
+  // its numbers — a dead end in the middle of the flow rather than a safeguard.
+  const fields = cronometerFields(BAD_IRON, 1, { allowSuspect: true })
+  assert.equal(fields.find((f) => f.label === 'Iron').value, 251.3,
+    "UT's figure is handed over as published, not repaired")
+  assert.match(cronometerEntry(BAD_IRON, 1, { allowSuspect: true }), /Iron: 251\.3mg/)
+})

@@ -4,7 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1b1b1f">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+<!-- img-src allows blob: for the generated Nutrition Facts label only. The image is drawn on
+     a canvas from menu.json and never leaves the phone; blob: cannot name a remote origin, so
+     this does not widen what the page can fetch. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>J2</title>
@@ -129,6 +132,18 @@
       separate boxes — so this is one tap per field, typed in by you. Tap a value to copy it.</p>
     <p id="cronoservings" class="hint"></p>
     <div id="cronofields"></div>
+
+    <details id="labelspike">
+      <summary class="hint">Try the label photo instead (experiment)</summary>
+      <p class="hint">Builds a Nutrition Facts image from UT's figures. Cronometer can scan a
+        food label photo and fill the whole form from it — whether it accepts one made this
+        way is exactly what is being tested. If it works, this is one action instead of
+        fifteen. If it doesn't, use the fields above.</p>
+      <button type="button" id="labelmake" class="ghost">Build the label image</button>
+      <div id="labelout"></div>
+      <p id="labelstatus" class="status"></p>
+    </details>
+
     <p id="cronostatus" class="status"></p>
     <details id="cronofallback">
       <summary class="hint">Clipboard blocked? Copy the whole block by hand</summary>

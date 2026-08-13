@@ -313,9 +313,12 @@ export class SuspectItemError extends Error {}
  * @throws {SuspectItemError} when the dish's published figures failed the plausibility
  *   checks. Matching Cronometer perfectly to a wrong UT number is still a wrong diary.
  */
-export function cronometerFields(item, servings) {
+export function cronometerFields(item, servings, { allowSuspect = false } = {}) {
   const suspect = suspectOf(item)
-  if (suspect.length > 0) {
+  // `allowSuspect` is the same per-dish override that lets it back into the plate. Without it
+  // here, "Use it anyway" would return a dish to the picks and then refuse to hand over its
+  // numbers, which is a dead end in the middle of the flow rather than a safeguard.
+  if (suspect.length > 0 && !allowSuspect) {
     throw new SuspectItemError(
       `UT's figures for ${item.name} do not look right: ${suspect.map((s) => s.message).join('; ')}.`,
     )
@@ -346,8 +349,8 @@ export function cronometerFields(item, servings) {
  *
  * @throws {SuspectItemError} see cronometerFields.
  */
-export function cronometerEntry(item, servings) {
-  const lines = cronometerFields(item, servings).map(({ label, value, unit }) =>
+export function cronometerEntry(item, servings, options) {
+  const lines = cronometerFields(item, servings, options).map(({ label, value, unit }) =>
     `${label}: ${value == null ? '(not published — leave blank)' : `${value}${unit}`}`)
 
   return [

@@ -262,6 +262,29 @@ button.copy {
 }
 .blockedrow span { flex: 1; }
 .blockedrow button.ghost { width: auto; padding: 6px 12px; flex-shrink: 0; }
+
+/* The generated Nutrition Facts label. White border on purpose: the panel is white and the
+   app is dark, and without it the label's own edge is invisible. */
+.labelimg {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 10px 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+a.download {
+  display: block;
+  text-align: center;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink);
+  text-decoration: none;
+}
+#labelspike { margin: 12px 0; }
+#labelspike.hidden { display: none; }
 #pastefallback summary { cursor: pointer; }
 #pastebox {
   width: 100%;
