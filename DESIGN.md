@@ -83,7 +83,7 @@ is warmth in the *color field*, not a retreat to cards.
 
 ## Palette
 
-Source: **rung 1 of the sourcing ladder — Aadi supplied it.** "Obviously in UT colors."
+Source: **rung 1 of the sourcing ladder — specified by the owner:** "obviously in UT colors."
 The University of Texas at Austin brand palette is therefore binding: chosen, not improved,
 not mixed with a Sanzo Wada row.
 
