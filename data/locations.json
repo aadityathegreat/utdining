@@ -3,7 +3,7 @@
     "num": "12",
     "name": "J2 Dining",
     "firstSeen": "2026-08-08",
-    "lastSeen": "2026-08-21",
+    "lastSeen": "2026-08-22",
     "itemCount": 101,
     "mealNames": [
       "Breakfast",
@@ -15,7 +15,7 @@
     "num": "14",
     "name": null,
     "firstSeen": "2026-08-21",
-    "lastSeen": "2026-08-21",
+    "lastSeen": "2026-08-22",
     "itemCount": 20,
     "mealNames": [
       "Lunch"
@@ -34,14 +34,22 @@
   },
   "03": {
     "num": "03",
-    "name": null,
+    "name": "Kins Dining",
     "firstSeen": "2026-08-21",
-    "lastSeen": "2026-08-21",
-    "itemCount": 102,
+    "lastSeen": "2026-08-22",
+    "itemCount": 116,
     "mealNames": [
       "Breakfast",
       "Lunch",
       "Dinner"
     ]
+  },
+  "12(a)": {
+    "num": "12(a)",
+    "name": "JCL Dining",
+    "firstSeen": "2026-08-22",
+    "lastSeen": "2026-08-22",
+    "itemCount": 0,
+    "mealNames": []
   }
 }
