@@ -456,6 +456,19 @@ main { padding-bottom: var(--s-8); }
 
 .grid { display: grid; grid-template-columns: 1fr auto; gap: var(--s-2) var(--s-3); align-items: center; padding: 0 var(--gutter); }
 .grid label { font-size: var(--t-small); color: var(--mute); }
+
+/* Targets carry a provenance line: five of the thirteen are the user's own figures and the
+   rest are shipped reference values, and the grid used to present all of them identically
+   under a hint claiming they all came from Cronometer. Scoped to #targets so the Fuel grid's
+   single-line labels are untouched. */
+#targets label { display: flex; flex-direction: column; gap: 2px; padding-block: var(--s-1); }
+#targets .provenance {
+  font-size: var(--t-eyebrow);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  font-weight: 600;
+}
 .grid input { width: 7.5rem; text-align: right; font-variant-numeric: tabular-nums; }
 
 .status { font-size: var(--t-small); min-height: 1.4em; padding: 0 var(--gutter); color: var(--mute); }

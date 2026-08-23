@@ -86,6 +86,36 @@ const NUTRIENT_LABEL = {
 /** The carb key the profile is actually keeping a target in. */
 const carbKey = () => (profile.carbBasis === 'net' ? 'netcarb_g' : 'carb_g')
 
+/**
+ * Where each target's shipped value came from, said out loud next to the box.
+ *
+ * The Targets section used to open with "Pulled from your Cronometer targets", which is true
+ * of five of these thirteen and false of the rest. The app was asserting that FDA daily values
+ * and RDA reference figures were his goals — and then ranking his food against them, because
+ * `needVector` scores any target above zero and cannot tell a placeholder from a real one.
+ *
+ * Two words apiece, not a per-nutrient citation of RDA versus daily value versus upper limit.
+ * The question the screen has to answer is "is this mine or not", and the exact standard behind
+ * each default is recorded in DEFAULT_PROFILE's comments where it cannot be misread as a claim
+ * about him. The markers are deliberately terse — eight rows reading "reference default, not
+ * yours" turned a quiet distinction into the loudest thing on the screen, and the sentence
+ * above the grid already says plainly that anything not marked Yours is not his goal.
+ *
+ * Sodium gets its own line because it is neither: it is a published upper limit used
+ * deliberately as a budget to spend rather than a goal to reach. See the Targets copy.
+ */
+const TARGET_SOURCE = {
+  kcal: 'Yours', protein_g: 'Yours', carb_g: 'Yours', netcarb_g: 'Yours', fat_g: 'Yours',
+  fiber_g: 'Reference default',
+  satfat_g: 'Reference default',
+  addedsugar_g: 'Reference default',
+  sodium_mg: 'Budget, not a goal',
+  vitd_mcg: 'Reference default',
+  calcium_mg: 'Reference default',
+  iron_mg: 'Reference default',
+  potassium_mg: 'Reference default',
+}
+
 const RESTRICTION_ICONS = [
   'Beef', 'Pork', 'Milk', 'Eggs', 'Fish', 'Shellfish', 'Peanuts', 'TreeNuts',
   'Sesame', 'Soy', 'Wheat',
@@ -1310,7 +1340,21 @@ function renderPrefs() {
   for (const key of Object.keys(DEFAULT_PROFILE.targets)) {
     if (key === skip) continue
     const label = document.createElement('label')
-    label.textContent = NUTRIENT_LABEL[key] ?? key
+    label.htmlFor = `t_${key}`
+    const name = document.createElement('span')
+    name.textContent = NUTRIENT_LABEL[key] ?? key
+    label.append(name)
+
+    // The provenance sits under the name rather than as a separate column: at 375px a third
+    // column would squeeze the figure, and the figure is what gets typed into.
+    const source = TARGET_SOURCE[key]
+    if (source) {
+      const note = document.createElement('span')
+      note.className = 'provenance'
+      note.textContent = source
+      label.append(note)
+    }
+
     const input = document.createElement('input')
     Object.assign(input, { type: 'number', inputMode: 'decimal', id: `t_${key}`, min: '0' })
     input.value = profile.targets[key] ?? 0
