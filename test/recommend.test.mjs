@@ -8,7 +8,7 @@ import {
   cronometerEntry, cronometerFields, deliversFor, mergeConsumed, MODES, profileForMode,
   shareForKcal, shareForMeal, nutrientsOf, SuspectItemError, ALLERGEN_TEXT,
   compareHalls, hallAvailability, itemsForMeal, plateDelivers, coverageOf, mealRepertoire,
-  listWords,
+  listWords, cronometerPayload, PAYLOAD_VERSION,
 } from '../recommend.mjs'
 
 const nut = (o) => ({
@@ -794,4 +794,63 @@ test('coverage: a compared hall carries its own coverage, or null', () => {
   })
   assert.equal(halls[0].coverage.text, '2 of 2 dishes this week have published nutrition.')
   assert.equal(halls[1].coverage, null)
+})
+
+
+// --- The form-helper payload (roadmap B1) -----------------------------------
+//
+// Same fields, same source, as JSON. The point of these tests is that the faster route into
+// Cronometer cannot be a laxer one.
+
+const LADLE = item('l*1', 'Chicken Noodle Soup', { kcal: 120, protein_g: 8 }, {
+  portion: { raw: '1 ozL', qty: 1, unit: 'ozL', unitClass: 'volume', grams: null },
+})
+
+test('payload: carries a version and the fields in Cronometer form order', () => {
+  const parsed = JSON.parse(cronometerPayload(GRILLED, 1))
+  assert.equal(parsed.utdining, PAYLOAD_VERSION)
+  assert.deepEqual(
+    parsed.fields.map((f) => f.label),
+    cronometerFields(GRILLED, 1).map((f) => f.label),
+    'the helper fills in form order, and it must be the same order the sheet lists',
+  )
+})
+
+test('payload: an unpublished nutrient survives as null, never 0 and never ""', () => {
+  const blank = item('n*1', 'Pancake Syrup', {}, {
+    nutrients: { kcal: 210, protein_g: 0, potassium_mg: null, addedsugar_g: null },
+  })
+  const byLabel = Object.fromEntries(
+    JSON.parse(cronometerPayload(blank, 1)).fields.map((f) => [f.label, f.value]),
+  )
+  assert.equal(byLabel.Potassium, null)
+  assert.equal(byLabel['Added Sugars'], null)
+  // The distinction the whole project turns on: a blank is not a zero.
+  assert.notEqual(byLabel.Potassium, 0)
+  assert.notEqual(byLabel.Potassium, '')
+})
+
+test('payload: a quarantined dish is refused, exactly as the copy buttons refuse it', () => {
+  const bad = item('s*1', 'Crispy Chopped Bacon', {}, {
+    nutrients: nut({ kcal: 100, fat_g: 112, carb_g: 112, protein_g: 112 }),
+    portion: { raw: '3 oz', qty: 3, unit: 'oz', unitClass: 'weight', grams: 85 },
+  })
+  assert.throws(() => cronometerPayload(bad, 1), SuspectItemError)
+  // And the override lets it through here on the same terms as everywhere else.
+  assert.ok(JSON.parse(cronometerPayload(bad, 1, { allowSuspect: true })).fields.length > 0)
+})
+
+test('payload: a ladle carries no Serving Weight, because there are no grams to give', () => {
+  const labels = JSON.parse(cronometerPayload(LADLE, 1)).fields.map((f) => f.label)
+  assert.ok(!labels.includes('Serving Weight'), 'a volume scoop must not produce a gram figure')
+  const weighed = JSON.parse(cronometerPayload(GRILLED, 1)).fields.map((f) => f.label)
+  assert.ok(weighed.includes('Serving Weight'))
+})
+
+test('payload: values are per serving, matching the printed list exactly', () => {
+  // The custom food is created once and the quantity changes after, so the payload must not
+  // be scaled by servings even when the pick advises three of them.
+  const one = JSON.parse(cronometerPayload(GRILLED, 1))
+  const three = JSON.parse(cronometerPayload(GRILLED, 3))
+  assert.deepEqual(one.fields, three.fields)
 })

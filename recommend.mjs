@@ -435,6 +435,35 @@ export function cronometerEntry(item, servings, options) {
   ].join('\n')
 }
 
+/** Bumped only when the shape below changes in a way the helper must notice. */
+export const PAYLOAD_VERSION = 1
+
+/**
+ * The same fields again, as JSON, for the form helper to read off the clipboard.
+ *
+ * This is the **spike** the release gate has been waiting on since 2026-08-14 (roadmap B1) and
+ * it is unproven: nobody has yet filled a real Cronometer Custom Food form from it. The
+ * one-tap-per-field list stays the supported path until that test is run. See `docs/HELPER.md`.
+ *
+ * Deliberately built on `cronometerFields` rather than beside it. Two payload builders would
+ * be two definitions of "what a dish is worth", and the day they disagreed the wrong one would
+ * be the one nobody was reading. The helper therefore fills the fields in the order Cronometer
+ * presents them, from the same source as the printed list and the copy buttons.
+ *
+ * `null` survives JSON as `null` and the helper leaves that box untouched. It must never
+ * become `0` or an empty string on the way through — the whole point of the field being blank
+ * is that UT published nothing, and a 0 asserts the food contains none of it.
+ *
+ * @throws {SuspectItemError} via cronometerFields. A dish whose figures cannot be true must
+ *   not get a faster route into the diary than a slower one.
+ */
+export function cronometerPayload(item, servings, options) {
+  return JSON.stringify({
+    utdining: PAYLOAD_VERSION,
+    fields: cronometerFields(item, servings, options).map(({ label, value }) => ({ label, value })),
+  })
+}
+
 /**
  * Splits what is left of the day across the meals still to come. Without this the
  * recommender sizes a single lunch to cover everything not yet eaten that day.

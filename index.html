@@ -236,6 +236,16 @@
     <div id="cronofields"></div>
     <p id="cronostatus" class="status"></p>
 
+    <details id="helperspike">
+      <summary class="hint">Form helper (unproven — being tested)</summary>
+      <p class="hint">Copies these same fields as one payload for a bookmarklet that fills
+        Cronometer's Custom Food form in the browser. <b>Nobody has proved it works yet</b> —
+        that test is the point of it. Setup and what to check: <code>docs/HELPER.md</code> in
+        the repo. The one-tap-per-field list above stays the supported way in either way.</p>
+      <button type="button" id="helpercopy" class="ghost">Copy payload for the helper</button>
+      <p id="helperstatus" class="status"></p>
+    </details>
+
     <details id="labelspike">
       <summary class="hint">Save a Nutrition Facts image of this dish</summary>
       <p class="hint">Draws UT's published figures as a real Nutrition Facts panel, to keep or

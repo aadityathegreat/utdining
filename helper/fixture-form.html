@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mock Custom Food form — utdining helper fixture</title>
+</head>
+<body>
+
+<!--
+  A STAND-IN for Cronometer's "Create a Custom Food" screen, not a copy of it.
+
+  Cronometer's real form is behind a login, so the helper was written without ever seeing its
+  DOM. This page exists to prove the parts that do not depend on that DOM: that the payload
+  parses, that a null field is left untouched, that a field the page does not have is reported
+  loudly rather than skipped, that no two labels resolve to the same box, and that nothing is
+  ever submitted.
+
+  It deliberately mixes the three form shapes findInput() knows about, because a real app is
+  rarely consistent:
+
+    - `label[for]` pointing at an input by id          (Food Name, Serving Name, Energy)
+    - a `<label>` wrapping its own input               (Protein, Carbs)
+    - a div/span row with no label element at all      (everything else)
+
+  "Trans-Fats" is deliberately ABSENT so the missing-field report has something to report.
+-->
+
+<h1>Create a Custom Food</h1>
+<form id="customfood" onsubmit="document.getElementById('submitted').textContent = 'SUBMITTED'; return false;">
+
+  <p>
+    <label for="f-name">Food Name</label>
+    <input id="f-name" type="text">
+  </p>
+
+  <p>
+    <label for="f-serving">Serving Name</label>
+    <input id="f-serving" type="text">
+  </p>
+
+  <p>
+    <label for="f-weight">Serving Weight</label>
+    <input id="f-weight" type="number">
+  </p>
+
+  <p>
+    <label for="f-per">Nutrition Displayed Per</label>
+    <input id="f-per" type="text">
+  </p>
+
+  <p>
+    <label for="f-type">Nutrition Label Type</label>
+    <input id="f-type" type="text">
+  </p>
+
+  <p>
+    <label for="f-energy">Energy</label>
+    <input id="f-energy" type="number">
+  </p>
+
+  <p><label>Protein <input type="number" data-field="protein"></label></p>
+  <p><label>Carbs <input type="number" data-field="carbs"></label></p>
+
+  <div class="row"><span class="lbl">Fat</span><input type="number" data-field="fat"></div>
+  <div class="row"><span class="lbl">Saturated</span><input type="number" data-field="satfat"></div>
+  <div class="row"><span class="lbl">Cholesterol</span><input type="number" data-field="chol"></div>
+  <div class="row"><span class="lbl">Sodium</span><input type="number" data-field="sodium"></div>
+  <div class="row"><span class="lbl">Fiber</span><input type="number" data-field="fiber"></div>
+  <div class="row"><span class="lbl">Sugars</span><input type="number" data-field="sugar"></div>
+  <div class="row"><span class="lbl">Added Sugars</span><input type="number" data-field="addedsugar"></div>
+  <div class="row"><span class="lbl">Vitamin D</span><input type="number" data-field="vitd"></div>
+  <div class="row"><span class="lbl">Calcium</span><input type="number" data-field="calcium"></div>
+  <div class="row"><span class="lbl">Iron</span><input type="number" data-field="iron"></div>
+  <div class="row"><span class="lbl">Potassium</span><input type="number" data-field="potassium"></div>
+
+  <button type="submit">Save</button>
+</form>
+
+<p id="submitted">not submitted</p>
+
+</body>
+</html>

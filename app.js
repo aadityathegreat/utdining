@@ -1,6 +1,7 @@
 import {
   recommend, needVector, unservableGaps, shareForMeal, cronometerEntry, cronometerFields,
   deliversFor, mergeConsumed, describeServing, stepServings, MODES, profileForMode, shareForKcal,
+  cronometerPayload,
   mealNamesFor, mealsLeft, itemsForMeal, hallAvailability, compareHalls, coverageOf,
   nutrientsOf, SuspectItemError,
 } from './recommend.mjs'
@@ -776,12 +777,16 @@ function openCronometerSheet(item, servings) {
   }
 
   wireLabelSpike(item, allowSuspect)
+  wireHelperSpike(item, servings, allowSuspect)
 
   let fields
   try {
     fields = cronometerFields(item, servings, { allowSuspect })
   } catch (err) {
     $('#labelspike').hidden = true
+    // And the helper. The refusal path renders no fields at all, so leaving this button live
+    // would hand out the PREVIOUS dish's payload from a screen showing none of its own.
+    $('#helperspike').hidden = true
     if (!(err instanceof SuspectItemError)) throw err
     status.textContent = `${err.message} Copying it would put a wrong number in your diary.`
     status.className = 'status bad'
@@ -843,6 +848,45 @@ function openCronometerSheet(item, servings) {
   }
 
   dlg.showModal()
+}
+
+/**
+ * The form-helper spike — roadmap B1, and unproven by design until it is run once.
+ *
+ * Copies the same fields the sheet lists, from the same `cronometerFields` source, as JSON for
+ * the bookmarklet in `helper/` to read off the clipboard. A quarantined dish throws here
+ * exactly as it does on every other route out of this sheet: a faster path into the diary must
+ * never be a laxer one.
+ */
+function wireHelperSpike(item, servings, allowSuspect) {
+  const status = $('#helperstatus')
+  status.textContent = ''
+  status.className = 'status'
+  $('#helperspike').open = false
+  $('#helperspike').hidden = false
+
+  $('#helpercopy').onclick = async () => {
+    let payload
+    try {
+      payload = cronometerPayload(item, servings, { allowSuspect })
+    } catch (err) {
+      if (!(err instanceof SuspectItemError)) throw err
+      status.textContent = `${err.message} Copying it would put a wrong number in your diary.`
+      status.className = 'status bad'
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(payload)
+      status.textContent = "Copied. Open Cronometer's Create a Custom Food screen and run the "
+        + 'bookmarklet. Check every field against the list above before saving.'
+      status.className = 'status ok'
+    } catch {
+      $('#cronotext').value = payload
+      $('#cronofallback').open = true
+      status.textContent = 'Clipboard blocked — the payload is in the box below.'
+      status.className = 'status bad'
+    }
+  }
 }
 
 // The Nutrition Facts image. Draws an Updated American panel from UT's figures and hands it
