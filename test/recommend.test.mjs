@@ -1,10 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import {
   recommend, scoreItem, needVector, isExcluded, describeServing, roundServings,
   stepServings, LOG_STEP, MIN_LOG_SERVINGS, MAX_LOG_SERVINGS, mealNamesFor, mealsLeft,
   cronometerEntry, cronometerFields, deliversFor, mergeConsumed, MODES, profileForMode,
-  shareForKcal, shareForMeal, nutrientsOf, SuspectItemError,
+  shareForKcal, shareForMeal, nutrientsOf, SuspectItemError, ALLERGEN_TEXT,
 } from '../recommend.mjs'
 
 const nut = (o) => ({
@@ -470,4 +472,61 @@ test('the plate a JCL lunch is sized against is half the day, not a third', () =
   assert.equal(jclLunch.kcal, 900)
   const wouldHaveBeen = shareForMeal(need, 3)
   assert.equal(wouldHaveBeen.kcal, 600)
+})
+
+
+// --- Restrictions: icons first, allergen text as the net under them ---------
+//
+// Re-verified against real Kins and JCL rows on 2026-08-23, which is when the icons turned
+// out not to be sufficient on their own. See ALLERGEN_TEXT for the sweep.
+
+const dish = (o) => ({ itemId: '1*1', name: 'X', icons: [], allergens: [], nutrients: nut({}), portion: { raw: '1 each', qty: 1, unit: 'each', unitClass: 'count' }, ...o })
+
+test('an icon still excludes, as it always did', () => {
+  assert.equal(isExcluded(dish({ icons: ['Beef'] }), { restrictions: ['Beef'] }), 'restriction')
+  assert.equal(isExcluded(dish({ icons: ['Vegan'] }), { restrictions: ['Beef'] }), null)
+})
+
+test('a dish with no icons at all is caught by its allergen text', () => {
+  // Chopped Brisket, 010013*4, J2 dinner: icons [], allergens ['Beef']. Before this it was
+  // recommendable to someone who restricts beef.
+  const brisket = dish({ name: 'Chopped Brisket', icons: [], allergens: ['Beef'] })
+  assert.equal(isExcluded(brisket, { restrictions: ['Beef'] }), 'restriction')
+
+  // Asado de Puerco, 081329*4, Kins lunch: leaked past both of Aadi's restrictions.
+  const asado = dish({ name: 'Asado de Puerco', icons: [], allergens: ['Soybeans', 'Pork', 'Beef'] })
+  assert.equal(isExcluded(asado, { restrictions: ['Beef', 'Pork'] }), 'restriction')
+  assert.equal(isExcluded(asado, { restrictions: ['Pork'] }), 'restriction')
+})
+
+test('the text is translated, not matched literally', () => {
+  // The icon says Soy, the label says Soybeans. A literal comparison would catch neither
+  // this nor Tree Nuts nor Crustacean Shellfish.
+  assert.equal(isExcluded(dish({ allergens: ['Soybeans'] }), { restrictions: ['Soy'] }), 'restriction')
+  assert.equal(isExcluded(dish({ allergens: ['Tree Nuts'] }), { restrictions: ['TreeNuts'] }), 'restriction')
+  assert.equal(isExcluded(dish({ allergens: ['Crustacean Shellfish'] }), { restrictions: ['Shellfish'] }), 'restriction')
+})
+
+test('Vegan and Halal stay icon-only, because the text never carries them', () => {
+  // 699 dishes carry one of these icons and not one names it in the text. Inventing a text
+  // term for them would match nothing and imply a fallback that does not exist.
+  assert.equal(ALLERGEN_TEXT.Vegan, undefined)
+  assert.equal(ALLERGEN_TEXT.Halal, undefined)
+  assert.equal(ALLERGEN_TEXT.Veggie, undefined)
+  assert.equal(isExcluded(dish({ icons: ['Vegan'] }), { restrictions: ['Vegan'] }), 'restriction')
+  assert.equal(isExcluded(dish({ allergens: ['Vegan'] }), { restrictions: ['Vegan'] }), null)
+})
+
+test('every allergen term UT publishes is one the map knows', () => {
+  // The loud failure this repo wants: the day UT adds a term — Mustard, say — it lands here
+  // rather than silently failing to exclude anything. Read from the committed menu.json,
+  // which is real scraped data rather than a fixture of it.
+  const menu = JSON.parse(readFileSync(
+    fileURLToPath(new URL('../data/menu.json', import.meta.url)), 'utf8'))
+  const known = new Set(Object.values(ALLERGEN_TEXT))
+  const unknown = new Set()
+  for (const item of Object.values(menu.items)) {
+    for (const a of item.allergens ?? []) if (!known.has(a)) unknown.add(a)
+  }
+  assert.deepEqual([...unknown], [], 'unmapped allergen wording in menu.json')
 })

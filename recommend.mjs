@@ -70,9 +70,53 @@ export function needVector(targets, consumed) {
 export const nutrientsOf = (item) => withDerived(item?.nutrients ?? {})
 
 /** Hard filters. An excluded item never reaches scoring. */
+/**
+ * FoodPro's allergen wording, keyed by the diet icon that means the same thing.
+ *
+ * The room's rule is that restriction filtering reads the menu page's diet icons and never
+ * the label's allergen text, because that text is blank on 27-42% of dishes depending on the
+ * hall. That rule stands — the text can never be the filter. What a sweep of all 1002 items
+ * across the three halls showed on 2026-08-23 is that the icons are not sufficient on their
+ * own either: **75 dishes name an allergen in the text while carrying no matching icon**,
+ * because 33 dishes publish no icons at all and UT applies the Tree Nuts icon especially
+ * loosely (64 of the 75).
+ *
+ * Two of those leaked past Aadi's own Beef and Pork restrictions: Chopped Brisket at J2
+ * dinner and Asado de Puerco at Kins lunch, both with an empty icon list and both naming
+ * their meat in the text.
+ *
+ * So the text is a second net under the icons, never a replacement for them. Union can only
+ * ever exclude more, which is the safe direction for a rule that exists to keep food off the
+ * plate. Note the vocabularies differ — the Soy icon is "Soybeans" in the text, TreeNuts is
+ * "Tree Nuts", Shellfish is "Crustacean Shellfish" — so this map is the translation, not a
+ * convenience.
+ *
+ * Vegan, Halal and Veggie are deliberately absent: 699 dishes carry the Vegan or Halal icon
+ * and **not one** names it in the text. Those three are icon-only, exactly as the room said.
+ */
+export const ALLERGEN_TEXT = {
+  Beef: 'Beef',
+  Pork: 'Pork',
+  Milk: 'Milk',
+  Eggs: 'Eggs',
+  Fish: 'Fish',
+  Shellfish: 'Crustacean Shellfish',
+  Peanuts: 'Peanuts',
+  Sesame: 'Sesame',
+  Soy: 'Soybeans',
+  Wheat: 'Wheat',
+  TreeNuts: 'Tree Nuts',
+}
+
 export function isExcluded(item, profile) {
   const restrictions = profile.restrictions ?? []
   if (item.icons?.some((i) => restrictions.includes(i))) return 'restriction'
+
+  // The second net. See ALLERGEN_TEXT: the icons miss 75 dishes that the text catches.
+  const allergens = item.allergens ?? []
+  if (restrictions.some((r) => ALLERGEN_TEXT[r] && allergens.includes(ALLERGEN_TEXT[r]))) {
+    return 'restriction'
+  }
 
   const ingredients = (item.ingredients ?? '').toLowerCase()
   const name = (item.name ?? '').toLowerCase()

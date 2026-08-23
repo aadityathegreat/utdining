@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  parseLabel, parseLongMenu, parsePortion, parseLocations, NUTRIENT_KEYS,
+  parseLabel, parseLongMenu, parsePortion, parseLocations, NUTRIENT_KEYS, KNOWN_ICONS,
 } from '../scraper/parse.mjs'
 
 const fixture = (n) =>
@@ -111,4 +111,92 @@ test('label: "nutrition not available" is a distinct, expected outcome', async (
   const html = '<div class="labelrecipe">Halal Chicken Sausage</div>' +
     '<div>Nutritional Information is not available for this recipe.</div>'
   assert.throws(() => pl(html), NoNutritionData)
+})
+
+
+// --- Kins and JCL: the two halls that reappeared for the semester -----------
+//
+// Captured 2026-08-23 from the 08/24 lunch menus, the first day JCL publishes one. Until
+// then the parsers had only ever seen J2, and `JCL-PLAN.md` had been written expecting a
+// retail location with different portion semantics and thin nutrition. Neither is true —
+// both halls parse as ordinary buffets — and these fixtures are what pins that.
+
+test('longmenu: JCL parses as an ordinary buffet, not a retail counter', () => {
+  const rows = parseLongMenu(fixture('longmenu-jcl.html'))
+  assert.equal(rows.length, 89)
+
+  const stations = [...new Set(rows.map((r) => r.station))]
+  assert.equal(stations.length, 9)
+  assert.ok(stations.includes('JCL Salad Bar'), 'JCL runs a salad bar like J2 does')
+
+  // The portion vocabulary is J2's. This is the fact that deleted the retail path: a
+  // pre-portioned counter would not be publishing ladles.
+  const units = new Set(rows.map((r) => r.portionRaw))
+  assert.ok(units.has('1 oz') && units.has('1 each') && units.has('1 ozL'), [...units].join(', '))
+})
+
+test('longmenu: Kins parses, and every icon on both new halls is a known one', () => {
+  // parseLongMenu drops unknown icons, but parseIcons on the labels throws on them, and
+  // KNOWN_ICONS is the closed set restriction filtering depends on. A hall UT adds with a
+  // new icon must not slip through as an item with one fewer restriction.
+  const kins = parseLongMenu(fixture('longmenu-kins.html'))
+  assert.equal(kins.length, 115)
+  assert.equal([...new Set(kins.map((r) => r.station))].length, 15)
+
+  for (const rows of [kins, parseLongMenu(fixture('longmenu-jcl.html'))]) {
+    for (const r of rows) for (const i of r.icons) assert.ok(KNOWN_ICONS.has(i), i)
+  }
+})
+
+test('longmenu: the four restriction icons all appear on the new halls', () => {
+  // Beef, Pork, Vegan and Halal are the ones the room's hardest rule turns on. If any of
+  // them stopped parsing on a hall, the filter would fail silently rather than loudly.
+  for (const f of ['longmenu-jcl.html', 'longmenu-kins.html']) {
+    const rows = parseLongMenu(fixture(f))
+    for (const icon of ['Beef', 'Pork', 'Vegan', 'Halal']) {
+      assert.ok(rows.some((r) => r.icons.includes(icon)), `${icon} missing from ${f}`)
+    }
+  }
+})
+
+test('label: Vegan and Halal are carried by the icon and by nothing else', () => {
+  // The whole reason restriction filtering reads icons. Dragonheart Tofu is Vegan and Halal
+  // on the menu page; its allergen text names neither, and says "Soybeans" where the icon
+  // says "Soy" — so the text is a different vocabulary as well as an incomplete one.
+  const tofu = parseLabel(fixture('label-jcl-tofu.html'))
+  assert.equal(tofu.name, 'Dragonheart Tofu')
+  assert.deepEqual(tofu.icons, ['Soy', 'Sesame', 'Vegan', 'Halal'])
+  assert.deepEqual(tofu.allergens, ['Soybeans', 'Sesame'])
+
+  const patty = parseLabel(fixture('label-kins-veggiepatty.html'))
+  assert.equal(patty.name, 'California Veggie Patty')
+  assert.ok(patty.icons.includes('Vegan') && patty.icons.includes('Halal'))
+  assert.deepEqual(patty.allergens, ['Soybeans'])
+
+  // Halal is absent from the text even on a dish whose text does list its meat.
+  const burger = parseLabel(fixture('label-kins-burger.html'))
+  assert.deepEqual(burger.icons, ['Beef', 'Halal'])
+  assert.deepEqual(burger.allergens, ['Beef'])
+})
+
+test('label: the new halls parse portions and nutrients the same way J2 does', () => {
+  const salami = parseLabel(fixture('label-jcl-salami.html'))
+  assert.equal(salami.name, 'Salami Slices')
+  assert.deepEqual(salami.icons, ['Beef', 'Pork'])
+  assert.deepEqual(salami.portion, {
+    raw: '1 oz', qty: 1, unit: 'oz', unitClass: 'weight', grams: 28.3,
+  })
+  assert.equal(salami.nutrients.kcal, 101.3)
+
+  const burger = parseLabel(fixture('label-kins-burger.html'))
+  assert.deepEqual(burger.portion, {
+    raw: '1 each', qty: 1, unit: 'each', unitClass: 'count', grams: null,
+  })
+  assert.equal(burger.nutrients.kcal, 293.9)
+
+  for (const f of ['label-jcl-salami.html', 'label-jcl-tofu.html',
+    'label-kins-burger.html', 'label-kins-veggiepatty.html']) {
+    assert.deepEqual(Object.keys(parseLabel(fixture(f)).nutrients).sort(),
+      [...NUTRIENT_KEYS].sort(), f)
+  }
 })
