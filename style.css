@@ -351,6 +351,22 @@ main { padding-bottom: var(--s-8); }
   margin-left: -1px;
 }
 
+/* --- Compare: one slot per hall ------------------------------------------ */
+
+/* No new container primitive. A hall slot is the existing Section — eyebrow, hairline, gutter
+   — wrapped around the existing Item. Stacked, because at 375px three plates side by side
+   would be three columns of about 110px and the portion figure is the point. */
+.hallslot > .empty { padding: var(--s-4) var(--gutter); }
+/* The Item above already draws a hairline; a second one under the summary would read as a
+   separator between the hall and itself. */
+.hallslot > .total { border-top: 0; padding-block: var(--s-2) var(--s-3); }
+.hallslot > .caveat {
+  font-size: var(--t-small);
+  color: var(--faint);
+  margin: 0;
+  padding: 0 var(--gutter) var(--s-2);
+}
+
 /* --- Ledger: the panel's own row ----------------------------------------- */
 
 .ledger { width: 100%; border-collapse: collapse; }

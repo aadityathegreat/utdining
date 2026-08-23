@@ -455,12 +455,174 @@ export function cronometerEntry(item, servings, options) {
 export function mealNamesFor(hall, date) {
   const day = hall?.days?.find((d) => d.date === date)
   if (day) return day.meals.map((m) => m.meal)
+  return mealRepertoire(hall)
+}
 
+/**
+ * Every meal a hall publishes anywhere in the scraped window, in the order it first
+ * publishes them. This is the hall's standing repertoire rather than one day's menu, so it
+ * survives a closure: JCL Dining's repertoire is Lunch and Dinner whether or not it is open
+ * today. Split out of `mealNamesFor` because the compare view needs both answers about the
+ * same hall at once — what it serves at all, and what it serves today.
+ */
+export function mealRepertoire(hall) {
   const seen = []
   for (const d of hall?.days ?? []) {
     for (const m of d.meals) if (!seen.includes(m.meal)) seen.push(m.meal)
   }
   return seen
+}
+
+/** "lunch and dinner", "breakfast, lunch and dinner" — an Oxford-comma-free list. */
+export const listWords = (words) => words.length < 2
+  ? (words[0] ?? '')
+  : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`
+
+/**
+ * The dishes on one hall's menu for one meal on one date, each stamped with the station it
+ * is served at.
+ *
+ * Pulled out of the app so the compare view asks the question exactly the way the Now tab
+ * does. Two ways of reading the same menu would eventually disagree, and the one that
+ * disagreed would be the one nobody was looking at.
+ */
+export function itemsForMeal(menu, hall, date, mealName) {
+  const day = hall?.days?.find((d) => d.date === date)
+  const meal = day?.meals?.find((m) => m.meal === mealName)
+  if (!meal) return []
+
+  // The station wins over anything on the item itself: it is a property of where the dish is
+  // being served today, not of the recipe, and the same recipe turns up at different stations
+  // and different halls.
+  return meal.stations.flatMap((station) =>
+    station.itemIds
+      .map((id) => (menu?.items?.[id]
+        ? { itemId: id, ...menu.items[id], station: station.name }
+        : null))
+      .filter(Boolean))
+}
+
+/**
+ * Whether a hall can answer the question being asked of it, and if not, what to say instead.
+ *
+ * Four silences, and saying the wrong one is the bug this app already shipped once — it
+ * offered JCL a breakfast that hall has never served. They are genuinely different facts:
+ *
+ * - `unlisted` — nothing scraped for this hall at all. We know of no meals it serves.
+ * - `closed` — it serves meals, but publishes no menu for this date.
+ * - `notserved` — it is open today and this meal is not in its repertoire. JCL at breakfast.
+ * - `notoday` — the meal is in its repertoire but absent from today's menu.
+ *
+ * `text` is null only for `open`. Every other kind carries the sentence to render in that
+ * hall's slot, because an empty slot is the one thing a comparison must never show.
+ */
+export function hallAvailability(hall, date, mealName) {
+  const name = hall?.name ?? 'This hall'
+  const serves = mealRepertoire(hall)
+  const spoken = listWords(serves.map((m) => m.toLowerCase()))
+  const meal = String(mealName ?? '').toLowerCase()
+
+  if (serves.length === 0) {
+    return { kind: 'unlisted', serves, text: `No menu published for ${name} at the moment.` }
+  }
+  if (!hall.days.some((d) => d.date === date)) {
+    return {
+      kind: 'closed',
+      serves,
+      text: `${name} publishes no menu for today. It serves ${spoken} on the days it is open.`,
+    }
+  }
+  if (!serves.includes(mealName)) {
+    return { kind: 'notserved', serves, text: `${name} does not serve ${meal}. It serves ${spoken}.` }
+  }
+  if (!mealNamesFor(hall, date).includes(mealName)) {
+    return { kind: 'notoday', serves, text: `No ${meal} menu for today at ${name}.` }
+  }
+  return { kind: 'open', serves, text: null }
+}
+
+/** What a whole plate delivers. Unpublished nutrients were dropped by `deliversFor` on the
+ *  way in and stay absent here — a blank must never total as a zero. */
+export function plateDelivers(picks) {
+  const total = {}
+  for (const p of picks ?? []) {
+    for (const [k, v] of Object.entries(p.delivers ?? {})) total[k] = (total[k] ?? 0) + v
+  }
+  return total
+}
+
+/**
+ * The best plate at every hall for one meal, against one shared need vector.
+ *
+ * The question this answers is the one actually being asked walking out of Jester: J2 or
+ * Kins or JCL. The hall tabs answer it only by making you tap through them one at a time
+ * and hold three plates in your head.
+ *
+ * Every hall is scored against the SAME need vector, so the plates are comparable. That
+ * vector is sized against the selected hall's meal sequence — see `mealsLeft` — because one
+ * of them has to be chosen and a per-hall divisor would mean three plates measured against
+ * three different budgets, which is not a comparison.
+ *
+ * Ratings and restrictions are global: items are keyed by FoodPro's `RecNumAndPort`, so the
+ * same recipe is the same dish at every hall and a thumbs-down follows it around.
+ *
+ * A hall that cannot answer still gets an entry with `picks: []` and a sentence. Dropping it
+ * would quietly turn "JCL does not serve breakfast" into "JCL does not exist".
+ */
+export function compareHalls(menu, { date, mealName, need, profile, maxItems } = {}) {
+  return (menu?.halls ?? []).map((hall) => {
+    const availability = hallAvailability(hall, date, mealName)
+    const base = {
+      num: hall.num,
+      name: hall.name,
+      coverage: coverageOf(hall),
+      ...availability,
+      items: [],
+      picks: [],
+      delivers: {},
+    }
+    if (availability.kind !== 'open') return base
+
+    const items = itemsForMeal(menu, hall, date, mealName)
+    const picks = recommend(items, need, profile, { maxItems })
+    if (picks.length === 0) {
+      return {
+        ...base,
+        kind: 'nofit',
+        items,
+        text: `Nothing on ${hall.name}'s ${String(mealName).toLowerCase()} line fits what you have left.`,
+      }
+    }
+    return { ...base, items, picks, delivers: plateDelivers(picks) }
+  })
+}
+
+/**
+ * How much of a hall's week UT published nutrition for, or null if the question cannot be
+ * answered from this `menu.json`.
+ *
+ * The fields are OPTIONAL by contract. The scraper started writing them on 2026-08-23 and
+ * every `menu.json` committed before that has none, so an app that assumed them would report
+ * a coverage of zero for a hall that publishes everything. Absent means say nothing — the
+ * same rule as an unpublished nutrient, applied to a field about unpublished nutrients.
+ * There is deliberately no "0 of 0" and no percentage derived from a missing count.
+ */
+export function coverageOf(hall) {
+  const dishes = hall?.dishes
+  const withNutrition = hall?.dishesWithNutrition
+  const withoutNutrition = hall?.dishesWithoutNutrition
+  const known = [dishes, withNutrition, withoutNutrition].every((n) => Number.isFinite(n) && n >= 0)
+  if (!known || dishes === 0) return null
+
+  // Neither published nor readable: UT served a label and the parser could not read it.
+  // Counting those as "UT publishes nothing" would blame UT for our own failure.
+  const unreadable = Math.max(0, dishes - withNutrition - withoutNutrition)
+  const text = `${withNutrition} of ${dishes} dishes this week have published nutrition`
+    + (withoutNutrition > 0 ? `; UT publishes no label for ${withoutNutrition}` : '')
+    + (unreadable > 0 ? `; ${unreadable} could not be read` : '')
+    + '.'
+
+  return { dishes, withNutrition, withoutNutrition, unreadable, text }
 }
 
 /**
