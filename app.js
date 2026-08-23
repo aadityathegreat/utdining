@@ -442,16 +442,32 @@ function renderCompare() {
     maxItems: modeSpec.maxItems,
   })
 
+  // Same disclosure the single-hall view carries, for the same reason: with no energy target
+  // nothing divides by calories and protein is not scored at all, so the picks are real but
+  // answering a much narrower question. Shipped without this at first, which left the
+  // comparison stating a budget of "0 cal" and nothing saying why.
+  if (!(profile.targets.kcal > 0) || !(profile.targets.protein_g > 0)) {
+    picksEl.append(noteBlock('shortfall', 'Targets not set',
+      'Calorie and protein targets are not set, so these picks ignore both. '
+      + 'Set them in Prefs (copy from your Cronometer targets page).'))
+  }
+
   // The shared budget, stated once. Every hall below was scored against this exact vector —
   // that is what makes the three plates comparable, and it is worth saying rather than
   // leaving the reader to assume it.
+  //
+  // With no energy target there is no budget to state. Printing "0 cal" would be a figure
+  // asserting something UT and Aadi both never said, so the sentence stops at the meal and
+  // the note above carries the explanation.
   const budget = document.createElement('div')
   budget.className = 'total'
   const proteinBudget = need.protein_g > 0 ? `, ${Math.round(need.protein_g)} g protein` : ''
-  budget.textContent =
-    `Every hall scored against the same ${mealName.toLowerCase()}: `
-    + `${Math.round(need.kcal ?? 0)} cal${proteinBudget}, `
-    + `${Math.round(dayNeed.kcal ?? 0)} left for the whole day.`
+  budget.textContent = need.kcal > 0
+    ? `Every hall scored against the same ${mealName.toLowerCase()}: `
+      + `${Math.round(need.kcal)} cal${proteinBudget}, `
+      + `${Math.round(dayNeed.kcal ?? 0)} left for the whole day.`
+    : `Every hall scored against the same ${mealName.toLowerCase()}, `
+      + 'against the same targets.'
   picksEl.append(budget)
 
   for (const hall of halls) {
