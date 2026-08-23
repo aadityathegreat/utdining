@@ -783,3 +783,242 @@ export function unservableGaps(extraTargets, extras) {
   }
   return gaps.sort((a, b) => b.shortBy - a.shortBy)
 }
+
+// ---------------------------------------------------------------------------
+// The interview
+// ---------------------------------------------------------------------------
+
+/**
+ * Questions the app asks instead of only watching thumbs.
+ *
+ * Asked for on 2026-08-02 — "ask me what I need and prefer, rather than only learning from
+ * what I rate" — and deferred the same day. What changed since is scale: three halls and
+ * about a thousand items, where rating dishes one at a time covers the menu far too slowly to
+ * be the only way the app learns anything.
+ *
+ * **Every question maps to exactly one profile field, and the answer is written verbatim.**
+ * Nothing here infers. "Do you like spicy food" is not in this bank and must not be added,
+ * because there is no field it writes to without the app guessing what it means — and guessing
+ * a preference is the same failure as guessing a nutrient. The Prefs screen edits these same
+ * fields, so anything asked here can be corrected there and vice versa.
+ *
+ * A SKIPPED question leaves its field exactly as it was. It is never answered on the user's
+ * behalf with a default, an empty value or a zero: "he did not say" and "he said none" are
+ * different facts, and only the second is a preference.
+ *
+ * `first` marks the questions asked at first run. They are the ones without which the app
+ * cannot do its job at all — a hall to read, and the two targets everything is scored against.
+ * The rest arrive one at a time, later, because a fifteen-question wall on first launch is how
+ * an app gets abandoned before it has shown anyone a plate.
+ */
+export const QUESTIONS = [
+  {
+    id: 'hall',
+    first: true,
+    kind: 'choice',
+    ask: 'Which dining hall do you eat at most?',
+    why: 'It opens there from now on. You can switch any time from the tabs at the top.',
+    // Options come from the menu rather than this file: halls come and go with the semester
+    // and a hardcoded list would offer one that closed.
+    options: (context) => (context?.halls ?? []).map((h) => ({ value: h.num, label: h.name })),
+    apply: (profile, value) => ({ ...profile, hallNum: value }),
+  },
+  {
+    id: 'restrictions',
+    first: true,
+    kind: 'chips',
+    ask: "Anything you don't eat?",
+    why: 'These are hidden everywhere, always. This is the one filter the app will not let '
+      + 'slip, so it is worth getting right.',
+    options: () => [
+      'Beef', 'Pork', 'Milk', 'Eggs', 'Fish', 'Shellfish', 'Peanuts', 'TreeNuts',
+      'Sesame', 'Soy', 'Wheat',
+    ].map((v) => ({ value: v, label: v === 'TreeNuts' ? 'Tree nuts' : v })),
+    current: (profile) => profile.restrictions ?? [],
+    apply: (profile, value) => ({ ...profile, restrictions: value }),
+  },
+  {
+    id: 'kcal',
+    first: true,
+    kind: 'number',
+    ask: 'What is your daily calorie target?',
+    why: 'Copy it off your Cronometer targets page. It stays on this phone. Without it '
+      + 'nothing can be sized to what is left of your day.',
+    unit: 'cal',
+    current: (profile) => profile.targets?.kcal || '',
+    apply: (profile, value) => ({ ...profile, targets: { ...profile.targets, kcal: value } }),
+  },
+  {
+    id: 'protein',
+    first: true,
+    kind: 'number',
+    ask: 'And your daily protein target?',
+    why: 'The nutrient a dining hall makes hardest to hit, and the one the recommender '
+      + 'weighs heaviest.',
+    unit: 'g',
+    current: (profile) => profile.targets?.protein_g || '',
+    apply: (profile, value) => ({ ...profile, targets: { ...profile.targets, protein_g: value } }),
+  },
+  {
+    id: 'carbbasis',
+    kind: 'choice',
+    ask: 'Does Cronometer show you Total Carbs or Net Carbs?',
+    why: 'Check the wording on its targets page. Getting this wrong compares your goal '
+      + 'against a different quantity every meal, all day.',
+    options: () => [
+      { value: 'total', label: 'Total carbs' },
+      { value: 'net', label: 'Net carbs' },
+    ],
+    current: (profile) => profile.carbBasis ?? 'total',
+    // Deliberately clears the number rather than relabelling it: 243 g of net carbs is not
+    // 243 g of total carbs, and carrying the figure across the switch is the bug this avoids.
+    apply: (profile, value) => (value === profile.carbBasis ? profile : {
+      ...profile,
+      carbBasis: value,
+      targets: { ...profile.targets, [value === 'net' ? 'carb_g' : 'netcarb_g']: 0 },
+    }),
+  },
+  {
+    id: 'carbs',
+    kind: 'number',
+    ask: 'What is your daily carbohydrate target?',
+    why: 'The figure Cronometer shows you, in whichever basis you just picked.',
+    unit: 'g',
+    current: (profile) => profile.targets?.[profile.carbBasis === 'net' ? 'netcarb_g' : 'carb_g'] || '',
+    apply: (profile, value) => ({
+      ...profile,
+      targets: {
+        ...profile.targets,
+        [profile.carbBasis === 'net' ? 'netcarb_g' : 'carb_g']: value,
+      },
+    }),
+  },
+  {
+    id: 'fat',
+    kind: 'number',
+    ask: 'And your daily fat target?',
+    why: 'Last of the four. The rest of the boxes in Prefs are reference values you can leave.',
+    unit: 'g',
+    current: (profile) => profile.targets?.fat_g || '',
+    apply: (profile, value) => ({ ...profile, targets: { ...profile.targets, fat_g: value } }),
+  },
+  {
+    id: 'blocklist',
+    kind: 'text',
+    ask: 'Any ingredient you would rather never see?',
+    why: 'Any dish whose published ingredients mention it is hidden, including ones you have '
+      + 'never been shown. One word works best — mushroom, olive.',
+    placeholder: 'mushroom',
+    // Appends. A blocklist built one answer at a time must not lose yesterday's answer.
+    apply: (profile, value) => {
+      const term = String(value).trim().toLowerCase()
+      const list = profile.ingredientBlocklist ?? []
+      if (!term || list.includes(term)) return profile
+      return { ...profile, ingredientBlocklist: [...list, term] }
+    },
+  },
+  {
+    id: 'reflux',
+    kind: 'choice',
+    ask: 'Should the app hide common reflux triggers?',
+    why: 'Tomato, citrus, chilli, garlic, onion, coffee, chocolate, fried food. It ships off '
+      + 'and this is your call to make, not the app\'s — it does arithmetic, it does not '
+      + 'advise on health.',
+    options: () => [
+      { value: 'no', label: 'No, leave them in' },
+      { value: 'yes', label: 'Yes, hide them' },
+    ],
+    current: (profile) => (profile.refluxFilter ? 'yes' : 'no'),
+    apply: (profile, value) => ({ ...profile, refluxFilter: value === 'yes' }),
+  },
+]
+
+/** A profile that has never been through the interview. */
+export const EMPTY_INTERVIEW = { done: false, seen: {} }
+
+const interviewOf = (profile) => ({ ...EMPTY_INTERVIEW, ...(profile?.interview ?? {}) })
+
+/**
+ * The next question to put to the user, or null when there is nothing to ask.
+ *
+ * First run walks the `first` questions in order and stops when they are all seen. After that
+ * exactly ONE question is offered at a time, and only when it has not been seen today — the
+ * app is opened for four seconds while walking, and a screen that asks something every single
+ * time is a screen that gets dismissed without reading.
+ *
+ * A question already answered is not asked again. A question skipped is asked again another
+ * day, because skipping is "not now", not "never" — but it goes to the back, so nothing is
+ * pressed twice in a row.
+ */
+export function nextQuestion(profile, { date, context, firstRunOnly = false } = {}) {
+  const interview = interviewOf(profile)
+  const firstRun = !interview.done || firstRunOnly
+  const pool = QUESTIONS.filter((q) => (firstRun ? q.first : true))
+
+  // First run puts each question ONCE. A skip there means "not now" exactly as it does later,
+  // but re-offering it in the same sitting is a loop rather than a question — which is what it
+  // did until a walkthrough on a fresh profile got stuck on the last one.
+  const outstanding = firstRun
+    ? pool.filter((q) => !interview.seen[q.id])
+    : pool.filter((q) => interview.seen[q.id]?.outcome !== 'answered')
+  if (outstanding.length === 0) return null
+
+  // A question with nothing to offer cannot be asked. The hall question on a menu that failed
+  // to load is the real case, and asking it with an empty list is worse than not asking.
+  const askable = outstanding.filter((q) => !q.options || q.options(context).length > 0)
+  if (askable.length === 0) return null
+
+  if (firstRun) return askable[0]
+
+  // One a day, counted across the whole bank rather than per question. Excluding only the
+  // question already put today still lets the app ask a different one the moment that is
+  // dismissed, which is the same nagging by another route.
+  if (Object.values(interview.seen).some((s) => s.at === date)) return null
+
+  // Never seen at all beats skipped-before, so the whole bank is covered once before anything
+  // is put a second time.
+  const unseen = askable.find((q) => !interview.seen[q.id])
+  if (unseen) return unseen
+
+  // Everything has been put at least once, so the skipped ones come back OLDEST FIRST. Taking
+  // the first of the list instead would press the same question every day forever and never
+  // return to the rest, which is how "ask me occasionally" becomes one question on a loop.
+  return [...askable].sort((a, b) =>
+    String(interview.seen[a.id]?.at ?? '').localeCompare(String(interview.seen[b.id]?.at ?? '')))[0]
+}
+
+/**
+ * Applies an answer, and records that the question was put.
+ *
+ * `value` of `undefined` means skipped — the field is left exactly as it was. That is the
+ * whole reason skip and answer are one function: it is otherwise far too easy to write a
+ * "cleared" value on the way past and call it an answer.
+ */
+export function answerQuestion(profile, questionId, value, { date } = {}) {
+  const question = QUESTIONS.find((q) => q.id === questionId)
+  if (!question) return profile
+
+  const skipped = value === undefined
+  const applied = skipped ? profile : question.apply(profile, value)
+  const interview = interviewOf(applied)
+
+  return {
+    ...applied,
+    interview: {
+      ...interview,
+      seen: { ...interview.seen, [questionId]: { at: date, outcome: skipped ? 'skipped' : 'answered' } },
+    },
+  }
+}
+
+/** Marks first run as over, whatever was answered during it. */
+export function finishFirstRun(profile) {
+  return { ...profile, interview: { ...interviewOf(profile), done: true } }
+}
+
+/** How far through the whole bank the user is, for the progress line. */
+export function interviewProgress(profile) {
+  const interview = interviewOf(profile)
+  const answered = QUESTIONS.filter((q) => interview.seen[q.id]?.outcome === 'answered').length
+  return { answered, total: QUESTIONS.length, done: interview.done }
+}

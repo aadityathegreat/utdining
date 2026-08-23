@@ -9,6 +9,7 @@ import {
   shareForKcal, shareForMeal, nutrientsOf, SuspectItemError, ALLERGEN_TEXT,
   compareHalls, hallAvailability, itemsForMeal, plateDelivers, coverageOf, mealRepertoire,
   listWords, cronometerPayload, PAYLOAD_VERSION,
+  QUESTIONS, nextQuestion, answerQuestion, finishFirstRun, interviewProgress,
 } from '../recommend.mjs'
 
 const nut = (o) => ({
@@ -853,4 +854,203 @@ test('payload: values are per serving, matching the printed list exactly', () =>
   const one = JSON.parse(cronometerPayload(GRILLED, 1))
   const three = JSON.parse(cronometerPayload(GRILLED, 3))
   assert.deepEqual(one.fields, three.fields)
+})
+
+
+// --- The interview (roadmap D) ----------------------------------------------
+//
+// Asked for on 2026-08-02: ask what he needs and prefers rather than only watching thumbs.
+// The rule these tests exist to hold is that a question NEVER answers itself — a skip leaves
+// the field exactly as it was, because "he did not say" and "he said none" are different facts.
+
+const HALLS = [{ num: '12', name: 'J2 Dining' }, { num: '03', name: 'Kins Dining' }]
+const ASK = { date: '2026-08-23', context: { halls: HALLS } }
+
+const fresh = () => ({
+  targets: { kcal: 0, protein_g: 0, carb_g: 0, netcarb_g: 0, fat_g: 0 },
+  carbBasis: 'total',
+  restrictions: ['Beef', 'Pork'],
+  refluxFilter: false,
+  ingredientBlocklist: [],
+  hallNum: '',
+})
+
+test('interview: every question writes to exactly one field and nothing infers', () => {
+  // The guard against the bank growing a "do you like spicy food" that has to be interpreted.
+  for (const q of QUESTIONS) {
+    assert.equal(typeof q.apply, 'function', `${q.id} has no apply`)
+    assert.ok(q.ask.length > 0, `${q.id} has no question`)
+    assert.ok(q.why.length > 0, `${q.id} does not say why it is asking`)
+    assert.ok(['choice', 'chips', 'number', 'text'].includes(q.kind), `${q.id} kind`)
+  }
+})
+
+test('interview: first run asks the four questions the app cannot work without', () => {
+  const first = QUESTIONS.filter((q) => q.first).map((q) => q.id)
+  assert.deepEqual(first, ['hall', 'restrictions', 'kcal', 'protein'])
+})
+
+test('interview: first run walks its questions in order', () => {
+  let profile = fresh()
+  const seen = []
+  for (let i = 0; i < 6; i++) {
+    const q = nextQuestion(profile, ASK)
+    if (!q) break
+    seen.push(q.id)
+    profile = answerQuestion(profile, q.id, q.id === 'hall' ? '03' : 1, ASK)
+  }
+  assert.deepEqual(seen, ['hall', 'restrictions', 'kcal', 'protein'])
+  assert.equal(nextQuestion(profile, ASK), null, 'first run should be exhausted')
+})
+
+test('interview: a skip changes nothing at all', () => {
+  const before = fresh()
+  const after = answerQuestion(before, 'restrictions', undefined, ASK)
+  assert.deepEqual(after.restrictions, before.restrictions)
+  assert.deepEqual(after.targets, before.targets)
+  assert.equal(after.hallNum, before.hallNum)
+  assert.equal(after.interview.seen.restrictions.outcome, 'skipped')
+})
+
+test('interview: a skipped question comes back another day, an answered one does not', () => {
+  let profile = finishFirstRun(fresh())
+  profile = answerQuestion(profile, 'reflux', undefined, ASK)
+  profile = answerQuestion(profile, 'carbbasis', 'net', ASK)
+
+  // Same day: nothing more, because one question a day is the whole point.
+  assert.equal(nextQuestion(profile, ASK), null)
+
+  // A day each, because the gate is one question per day and the walk has to respect it.
+  const ids = []
+  let walk = profile
+  for (let i = 0; i < 12; i++) {
+    const day = { ...ASK, date: `2026-09-${String(i + 1).padStart(2, '0')}` }
+    const q = nextQuestion(walk, day)
+    if (!q) break
+    ids.push(q.id)
+    walk = answerQuestion(walk, q.id, undefined, day)
+  }
+  assert.ok(ids.includes('reflux'), 'a skipped question must come back')
+  assert.ok(!ids.includes('carbbasis'), 'an answered question must not be asked again')
+})
+
+test('interview: never-asked beats asked-and-skipped, so the bank is covered once first', () => {
+  let profile = finishFirstRun(fresh())
+  profile = answerQuestion(profile, 'reflux', undefined, ASK)
+  const q = nextQuestion(profile, { ...ASK, date: '2026-08-24' })
+  assert.notEqual(q.id, 'reflux', 'a fresh question should come before repeating a skip')
+})
+
+test('interview: one question a day after first run, not a queue', () => {
+  const profile = finishFirstRun(fresh())
+  const q = nextQuestion(profile, ASK)
+  const asked = answerQuestion(profile, q.id, undefined, ASK)
+  assert.equal(nextQuestion(asked, ASK), null, 'a second question the same day is nagging')
+})
+
+test('interview: the hall question is not asked when there are no halls to offer', () => {
+  const profile = fresh()
+  const q = nextQuestion(profile, { date: ASK.date, context: { halls: [] } })
+  assert.notEqual(q?.id, 'hall', 'asking with an empty list is worse than not asking')
+})
+
+test('interview: answers land in the same fields Prefs edits', () => {
+  let p = fresh()
+  p = answerQuestion(p, 'hall', '03', ASK)
+  p = answerQuestion(p, 'restrictions', ['Milk'], ASK)
+  p = answerQuestion(p, 'kcal', 2162, ASK)
+  p = answerQuestion(p, 'protein', 135, ASK)
+  p = answerQuestion(p, 'reflux', 'yes', ASK)
+  assert.equal(p.hallNum, '03')
+  assert.deepEqual(p.restrictions, ['Milk'])
+  assert.equal(p.targets.kcal, 2162)
+  assert.equal(p.targets.protein_g, 135)
+  assert.equal(p.refluxFilter, true)
+})
+
+test('interview: switching carb basis clears the other figure rather than relabelling it', () => {
+  // The same rule the Prefs switch follows. 243 g of net carbs is not 243 g of total carbs.
+  let p = { ...fresh(), targets: { ...fresh().targets, carb_g: 243 } }
+  p = answerQuestion(p, 'carbbasis', 'net', ASK)
+  assert.equal(p.carbBasis, 'net')
+  assert.equal(p.targets.carb_g, 0, 'the old-basis figure must not survive the switch')
+})
+
+test('interview: the blocklist appends and never loses an earlier answer', () => {
+  let p = fresh()
+  p = answerQuestion(p, 'blocklist', 'Mushroom', ASK)
+  p = answerQuestion(p, 'blocklist', 'olive', { ...ASK, date: '2026-08-24' })
+  assert.deepEqual(p.ingredientBlocklist, ['mushroom', 'olive'])
+  // And a repeat is not a duplicate.
+  p = answerQuestion(p, 'blocklist', 'olive', { ...ASK, date: '2026-08-25' })
+  assert.deepEqual(p.ingredientBlocklist, ['mushroom', 'olive'])
+})
+
+test('interview: an empty text answer adds nothing rather than a blank entry', () => {
+  const p = answerQuestion(fresh(), 'blocklist', '   ', ASK)
+  assert.deepEqual(p.ingredientBlocklist, [])
+})
+
+test('interview: a profile that never met the interview is not treated as finished', () => {
+  const q = nextQuestion({ ...fresh(), interview: undefined }, ASK)
+  assert.equal(q.id, 'hall')
+  assert.equal(interviewProgress(fresh()).done, false)
+  assert.equal(interviewProgress(fresh()).answered, 0)
+  assert.equal(interviewProgress(fresh()).total, QUESTIONS.length)
+})
+
+test('interview: an unknown question id is ignored rather than throwing', () => {
+  const before = fresh()
+  assert.deepEqual(answerQuestion(before, 'nonsense', 1, ASK), before)
+})
+
+test('interview: skipped questions rotate oldest first rather than one on a loop', () => {
+  // The failure this guards: once every question has been put once, taking the head of the
+  // list presses the same one every day forever and the rest are never seen again.
+  let profile = finishFirstRun(fresh())
+  const ids = []
+  for (let i = 0; i < 12; i++) {
+    const day = { ...ASK, date: `2026-09-${String(i + 1).padStart(2, '0')}` }
+    const q = nextQuestion(profile, day)
+    if (!q) break
+    ids.push(q.id)
+    profile = answerQuestion(profile, q.id, undefined, day)
+  }
+  assert.equal(new Set(ids.slice(0, QUESTIONS.length)).size, QUESTIONS.length,
+    'the whole bank should be covered once before anything repeats')
+  assert.equal(ids[QUESTIONS.length], ids[0], 'and then it comes round again in the same order')
+})
+
+test('interview: skipping during first run moves on rather than asking again', () => {
+  // The loop a fresh-profile walkthrough got stuck in: a skipped question was still
+  // "unanswered", so first run offered it again immediately, and again, and again.
+  let profile = fresh()
+  const seen = []
+  for (let i = 0; i < 8; i++) {
+    const q = nextQuestion(profile, { ...ASK, firstRunOnly: true })
+    if (!q) break
+    seen.push(q.id)
+    profile = answerQuestion(profile, q.id, undefined, ASK) // skip every one
+  }
+  assert.deepEqual(seen, ['hall', 'restrictions', 'kcal', 'protein'])
+  assert.equal(nextQuestion(profile, { ...ASK, firstRunOnly: true }), null, 'first run must end')
+})
+
+test('interview: a question skipped at first run still comes back later', () => {
+  // Skipping is "not now", and first run is not a last chance.
+  let profile = fresh()
+  profile = answerQuestion(profile, 'protein', undefined, ASK)
+  profile = finishFirstRun(profile)
+  const q = nextQuestion(profile, { ...ASK, date: '2026-09-01' })
+  assert.ok(q, 'there should still be something to ask')
+  const ids = []
+  let walk = profile
+  for (let i = 0; i < 12; i++) {
+    const day = { ...ASK, date: `2026-09-${String(i + 1).padStart(2, '0')}` }
+    const next = nextQuestion(walk, day)
+    if (!next) break
+    ids.push(next.id)
+    walk = answerQuestion(walk, next.id, undefined, day)
+  }
+  assert.ok(ids.includes('protein'), 'a first-run skip must not be permanent')
 })
