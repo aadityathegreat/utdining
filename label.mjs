@@ -1,10 +1,19 @@
 // An Updated American Nutrition Facts panel, drawn from UT's published per-serving figures.
 //
-// WHY THIS EXISTS: Cronometer has no API and no diary import, and its mobile Custom Food
-// screen is separate numeric inputs that no single paste can fill. Its label-photo scanner is
-// the one route left that could fill every field from one action. This module produces the
-// photo. Whether Cronometer's scanner actually reads it is the open question — that is what
-// makes this a spike, and the UI says so rather than promising the round trip works.
+// WHY THIS EXISTS, and what changed: it was built as a spike. Cronometer has no API and no
+// diary import, and its mobile Custom Food screen is separate numeric inputs that no single
+// paste can fill, so its label-photo scanner looked like the one route that could fill every
+// field from a single action.
+//
+// **That route is closed.** Tested on the live phone on 2026-08-14: the image generates,
+// shares and saves to Photos, but Cronometer exposes no arbitrary label-photo import — its
+// documented flow reaches label OCR only after scanning a product barcode it does not
+// recognise, and a dining-hall dish has none. See `CRONOMETER-HANDOFF-BETA.md`.
+//
+// The module is kept because the panel is an honest artifact of UT's published figures, worth
+// saving or printing on its own. The drawing choices below still read as OCR-driven — large,
+// heavy strokes, black on white — and are left alone: they are exactly what a printed or
+// zoomed-in panel wants too.
 //
 // The model is pure and tested; only drawNutritionLabel touches a canvas.
 
@@ -65,15 +74,16 @@ const percentDv = (key, value) =>
 /**
  * Everything the panel prints, as data.
  *
- * Rows for nutrients UT did not publish are OMITTED rather than printed as zero. A scanner
- * that does not see a row leaves that field empty, which is the honest outcome; a printed
- * "0g" would assert the food contains none of it and skew every daily total afterwards.
- * The omissions come back in `omitted` so the UI can name them next to the image.
+ * Rows for nutrients UT did not publish are OMITTED rather than printed as zero. A missing
+ * row is the honest outcome; a printed "0g" would assert the food contains none of it and
+ * skew every daily total copied off this panel afterwards. The omissions come back in
+ * `omitted` so the UI can name them next to the image, because an absent row says nothing
+ * about itself.
  *
  * @param {object} item  a menu item, with `nutrients` and `portion`
  * @returns {{title, subtitle, servingText, calories, rows, micros, omitted}}
  * @throws {SuspectItemError} for a dish whose UT figures failed the plausibility checks —
- *   a photo of a wrong number is still a wrong number.
+ *   a printed panel of a wrong number is still a wrong number, and looks more official.
  */
 export function labelModel(item, { allowSuspect = false } = {}) {
   const suspect = suspectOf(item)
@@ -143,8 +153,8 @@ export function labelModel(item, { allowSuspect = false } = {}) {
 // Drawing
 // ---------------------------------------------------------------------------
 
-// Rendered large on purpose. This image exists to be read by an OCR scanner on a phone, and
-// a bigger panel with heavier strokes survives that better than a screen-sized one.
+// Rendered large on purpose: a bigger panel with heavier strokes stays legible printed, or
+// zoomed into on a phone, in a way a screen-sized one does not.
 const W = 760
 const PAD = 28
 const SCALE = 2
@@ -156,7 +166,7 @@ const FONT = (size, weight = '') =>
  * Draws the panel and returns the canvas. Browser only.
  *
  * Deliberately black on solid white with no rounded corners or theme colours: this is not UI,
- * it is an image meant to survive a photo scanner, and contrast is the whole job.
+ * it is a printable document, and contrast is the whole job.
  */
 export function drawNutritionLabel(model, doc = document) {
   const canvas = doc.createElement('canvas')
@@ -201,8 +211,8 @@ export function drawNutritionLabel(model, doc = document) {
   ctx.fillText(model.title, PAD, y)
   y += 10
 
-  // The dish name is not part of the FDA panel, but the scanner has to get a food name from
-  // somewhere and Cronometer asks for one.
+  // The dish name is not part of the FDA panel, but a saved panel with no dish on it is not
+  // identifiable a week later, and Cronometer asks for a food name anyway.
   line(model.subtitle, null, { size: 22 })
   rule(3)
   line(`Serving size  ${model.servingText}`, null, { size: 22, weight: 'bold' })

@@ -799,11 +799,21 @@ function openCronometerSheet(item, servings) {
   dlg.showModal()
 }
 
-// The label-photo spike. Cronometer's scanner is the only route left that could fill every
-// field from one action, so this draws an Updated American panel from UT's figures and hands
-// it to the iOS share sheet. Nobody has yet confirmed Cronometer accepts an image made this
-// way — the UI calls it an experiment for that reason, and the field list above stays the
-// supported path until the round trip is proven.
+// The Nutrition Facts image. Draws an Updated American panel from UT's figures and hands it
+// to the iOS share sheet.
+//
+// This began as a spike: Cronometer's label scanner looked like the one route that could fill
+// every field from a single action. **It is not, and the route is closed.** Tested on the
+// live phone on 2026-08-14 — the image generates, shares and saves to Photos correctly, but
+// Cronometer exposes no arbitrary label-photo import. Its documented flow reaches label OCR
+// only after scanning a product barcode it does not recognise, and a dining-hall dish has no
+// barcode. A made-up barcode was not used: it would misidentify the dish and could push a
+// bogus food into Cronometer's public review flow.
+//
+// The panel is kept because it is a genuine, honest artifact of UT's figures and worth saving
+// or printing. What was removed is every line of copy that told the user to go and scan it —
+// see `CRONOMETER-HANDOFF-BETA.md`, "Live iPhone result, 2026-08-14". The field list above is
+// the supported path and the only one.
 let labelUrl = null
 
 function wireLabelSpike(item, allowSuspect = false) {
@@ -853,9 +863,9 @@ function wireLabelSpike(item, allowSuspect = false) {
 
     const file = new File([blob], `${slug(item.name)}-nutrition.png`, { type: 'image/png' })
 
-    // Share sheet first: on iOS that is the route to Save Image, and from Photos the
-    // Cronometer scanner can pick it up. canShare is checked with the actual file because
-    // Safari advertises navigator.share while refusing file payloads.
+    // Share sheet first: on iOS that is the route to Save Image, and saving it is the whole
+    // point now that nothing downstream consumes it. canShare is checked with the actual file
+    // because Safari advertises navigator.share while refusing file payloads.
     if (navigator.canShare?.({ files: [file] })) {
       const share = document.createElement('button')
       share.type = 'button'
@@ -882,9 +892,8 @@ function wireLabelSpike(item, allowSuspect = false) {
       status.textContent = 'This browser will not share files. Download it, or long-press the image.'
     }
 
-    // Naming the omissions beside the image matters more here than anywhere else: a scanner
-    // silently leaves a missing field empty, and without this there is nothing to tell you
-    // whether the blank came from UT or from the scan.
+    // A row absent from a printed panel reads as an omission only if something says so. The
+    // panel cannot carry its own footnote, so the omissions are named beside it.
     if (model.omitted.length > 0) {
       const note = document.createElement('p')
       note.className = 'hint'
@@ -893,13 +902,6 @@ function wireLabelSpike(item, allowSuspect = false) {
         + 'Cronometer too.'
       out.append(note)
     }
-
-    const ask = document.createElement('p')
-    ask.className = 'hint'
-    ask.textContent = 'Now try it: Cronometer → Add Food → the camera / scan-a-label option → '
-      + 'pick this image from Photos. If it fills the form, check every value against the '
-      + 'fields above before saving.'
-    out.append(ask)
   }
 }
 
