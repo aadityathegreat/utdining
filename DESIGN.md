@@ -409,3 +409,18 @@ change.
 
 Added to the disclosure floor above: the coverage sentence when present, and its **absence**
 when the fields are not there.
+
+## The target provenance markers (added 2026-08-23)
+
+Every row in Prefs → Targets carries a marker under its name: **Yours**, **Reference default**,
+or **Budget, not a goal** for sodium. `.provenance`, eyebrow type, `--faint`, no colour.
+
+This is disclosure, not decoration, and it belongs on the floor above. Five of the thirteen
+targets are the user's own figures and the rest are values the app ships so it works out of the
+box — but `needVector` scores anything above zero and cannot tell a placeholder from a real
+goal, so an unmarked grid under the old hint *"Pulled from your Cronometer targets"* asserted
+that FDA daily values were his and then ranked his food against them.
+
+The markers are deliberately **terse**. The first pass read "Reference default, not yours" on
+eight consecutive rows and became the loudest thing on the screen — a quiet distinction shouted.
+The contrast with **Yours** carries it, and the sentence above the grid states it outright.
