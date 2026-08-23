@@ -334,7 +334,22 @@ main { padding-bottom: var(--s-8); }
 /* Shared action row for Field and Item. */
 .actions { display: flex; flex-wrap: wrap; gap: var(--s-2); }
 .actions button { min-height: 44px; padding: var(--s-2) var(--s-3); }
-.actions .mult { min-width: 52px; text-align: center; }
+/* Stepper: two nudge buttons welded into one control, so the pair reads as an adjustment to
+   the figure beside it rather than as two more actions competing in the row. Square inner
+   corners and a shared 1px edge do the welding. Both halves keep the 44px target, and the
+   weld matters most next to Remove in the log, where three same-sized buttons in a line
+   would otherwise invite a mis-tap on the destructive one. */
+.stepper { display: flex; flex: 0 0 auto; }
+.stepper button { min-width: 44px; padding: var(--s-2); }
+.stepper button:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.stepper button:last-child {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: -1px;
+}
 
 /* --- Ledger: the panel's own row ----------------------------------------- */
 

@@ -213,6 +213,35 @@ export function roundServings(servings, portion) {
   return Math.max(0.5, roundToStep(servings, 0.5))
 }
 
+/**
+ * How far one nudge of a log stepper moves, and the range it may move inside.
+ *
+ * Deliberately not `roundServings` and not `MAX_SERVINGS`. Those two answer "what is worth
+ * advising at a buffet line" — never half a piece, never more than two or three servings.
+ * The log answers a different question: what was actually taken. Half a burger and a fourth
+ * ladle of soup are both real, and a stepper that refuses to record them does not remove the
+ * error, it just moves it somewhere nobody can see.
+ *
+ * Halves for every unit class, count included. `describeServing` renders the result in the
+ * dish's own noun, so half of a `1 each` reads "0.5 pieces" and never becomes a gram figure.
+ *
+ * The ceiling is a stuck-thumb guard, not a nutritional judgement: twelve servings is past
+ * anything plausible, and without a ceiling a held button walks the log into the hundreds.
+ */
+export const LOG_STEP = 0.5
+export const MIN_LOG_SERVINGS = 0.5
+export const MAX_LOG_SERVINGS = 12
+
+export function stepServings(current, delta, step = LOG_STEP) {
+  const from = Number(current)
+  const base = Number.isFinite(from) ? from : MIN_LOG_SERVINGS
+  // Snap before stepping, not after. A pick arrives on whatever `roundServings` produced —
+  // an integer for count dishes — and a rescaled entry can be anything at all. Stepping off
+  // an unsnapped value would carry the offset through every later nudge.
+  const next = roundToStep(base, step) + delta * step
+  return Math.min(MAX_LOG_SERVINGS, Math.max(MIN_LOG_SERVINGS, roundToStep(next, step)))
+}
+
 // What the thing is actually called on the line, so the number means something while
 // holding a tray.
 const COUNT_NOUN = {

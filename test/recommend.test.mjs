@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   recommend, scoreItem, needVector, isExcluded, describeServing, roundServings,
+  stepServings, LOG_STEP, MIN_LOG_SERVINGS, MAX_LOG_SERVINGS,
   cronometerEntry, cronometerFields, deliversFor, mergeConsumed, MODES, profileForMode,
   shareForKcal, nutrientsOf, SuspectItemError,
 } from '../recommend.mjs'
@@ -360,4 +361,54 @@ test('the override reaches the Cronometer copy, not just the plate', () => {
   assert.equal(fields.find((f) => f.label === 'Iron').value, 251.3,
     "UT's figure is handed over as published, not repaired")
   assert.match(cronometerEntry(BAD_IRON, 1, { allowSuspect: true }), /Iron: 251\.3mg/)
+})
+
+
+// --- The log stepper -------------------------------------------------------
+//
+// The stepper replaced x0.5 / x1.5 / x2 multipliers of the recommendation. These tests pin
+// the two properties that made the swap worth doing: it moves in UT's own portion unit, and
+// it is not bound by what the recommender is willing to advise.
+
+test('stepServings moves in halves of a serving', () => {
+  assert.equal(LOG_STEP, 0.5)
+  assert.equal(stepServings(2, 1), 2.5)
+  assert.equal(stepServings(2, -1), 1.5)
+  assert.equal(stepServings(1, 1), 1.5)
+})
+
+test('stepServings snaps an off-step value before moving', () => {
+  // A count pick arrives as a whole number, a rescaled entry can be anything. Stepping off
+  // an unsnapped value would carry the offset through every later nudge.
+  assert.equal(stepServings(1.3, 1), 2)
+  assert.equal(stepServings(1.3, -1), 1)
+  assert.equal(stepServings(0.9, -1), 0.5)
+})
+
+test('stepServings clamps to a servable floor and a stuck-thumb ceiling', () => {
+  assert.equal(stepServings(MIN_LOG_SERVINGS, -1), MIN_LOG_SERVINGS)
+  assert.equal(stepServings(MAX_LOG_SERVINGS, 1), MAX_LOG_SERVINGS)
+  assert.equal(stepServings(0, -1), MIN_LOG_SERVINGS)
+  assert.equal(stepServings(NaN, 1), 1)
+})
+
+test('stepServings is not bound by what the recommender will advise', () => {
+  // MAX_SERVINGS caps advice at 2 for count and 3 for weight, and roundServings refuses a
+  // half piece. Neither constrains the log: a fourth helping and half a burger are both
+  // things that happen, and refusing to record them hides the error rather than removing it.
+  assert.equal(stepServings(3, 1), 3.5)
+  assert.equal(stepServings(1, -1), 0.5)
+  assert.equal(describeServing(0.5, { raw: '1 each', qty: 1, unit: 'each', unitClass: 'count' }), '0.5 pieces')
+})
+
+test('a stepped weight portion still refuses to invent grams', () => {
+  // The gram figure is derived from the oz weight UT published, scaled. A volume portion has
+  // no weight to scale, so stepping it must not produce one.
+  const weight = { raw: '4 oz', qty: 4, unit: 'oz', unitClass: 'weight', grams: 113 }
+  assert.equal(describeServing(stepServings(1, 1), weight), '1.5 servings · 6 oz (~170 g)')
+
+  const ladle = { raw: '4 ozL', qty: 4, unit: 'ozL', unitClass: 'volume' }
+  const stepped = describeServing(stepServings(1, 1), ladle)
+  assert.equal(stepped, '1.5 ladles (4 ozL each)')
+  assert.ok(!/\bg\b/.test(stepped), 'a ladle count must never carry a gram figure')
 })
