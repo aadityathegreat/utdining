@@ -7,6 +7,8 @@ import {
   stepServings, LOG_STEP, MIN_LOG_SERVINGS, MAX_LOG_SERVINGS, mealNamesFor, mealsLeft,
   cronometerEntry, cronometerFields, deliversFor, mergeConsumed, MODES, profileForMode,
   shareForKcal, shareForMeal, nutrientsOf, SuspectItemError, ALLERGEN_TEXT,
+  compareHalls, hallAvailability, itemsForMeal, plateDelivers, coverageOf, mealRepertoire,
+  listWords,
 } from '../recommend.mjs'
 
 const nut = (o) => ({
@@ -529,4 +531,267 @@ test('every allergen term UT publishes is one the map knows', () => {
     for (const a of item.allergens ?? []) if (!known.has(a)) unknown.add(a)
   }
   assert.deepEqual([...unknown], [], 'unmapped allergen wording in menu.json')
+})
+
+
+// --- The compare view: three halls, one need vector -------------------------
+//
+// The question walking out of Jester is "J2 or Kins or JCL". The hall tabs answer it only by
+// making you tap through them, and the thing that must not happen is a hall quietly missing
+// from the answer — JCL at breakfast is the case that gets this wrong.
+
+const stationOf = (...ids) => [{ name: 'Line', itemIds: ids }]
+
+const COMPARE_MENU = {
+  items: {
+    'g*1': GRILLED,
+    'f*1': FRIED,
+    'b*1': BEEF,
+    'bn*1': BEANS,
+  },
+  halls: [
+    {
+      num: '12',
+      name: 'J2 Dining',
+      days: [{
+        date: '2026-08-23',
+        meals: [
+          { meal: 'Breakfast', stations: stationOf('f*1') },
+          { meal: 'Lunch', stations: stationOf('g*1', 'f*1', 'bn*1') },
+          { meal: 'Dinner', stations: stationOf('g*1') },
+        ],
+      }],
+    },
+    {
+      num: '03',
+      name: 'Kins Dining',
+      days: [{
+        date: '2026-08-23',
+        meals: [
+          { meal: 'Breakfast', stations: stationOf('g*1') },
+          { meal: 'Lunch', stations: stationOf('f*1') },
+        ],
+      }],
+    },
+    {
+      // Lunch and dinner only, and shut today: both silences at once.
+      num: '12(a)',
+      name: 'JCL Dining',
+      days: [{
+        date: '2026-08-24',
+        meals: [
+          { meal: 'Lunch', stations: stationOf('g*1') },
+          { meal: 'Dinner', stations: stationOf('g*1') },
+        ],
+      }],
+    },
+  ],
+}
+
+const compareOn = (date, mealName) => compareHalls(COMPARE_MENU, {
+  date,
+  mealName,
+  need: needVector(TARGETS, {}),
+  profile: PROFILE,
+})
+
+test('compare: every hall gets a slot, in menu order', () => {
+  const halls = compareOn('2026-08-23', 'Lunch')
+  assert.deepEqual(halls.map((h) => h.name), ['J2 Dining', 'Kins Dining', 'JCL Dining'])
+})
+
+test('compare: an open hall returns a real plate with a reason', () => {
+  const [j2] = compareOn('2026-08-23', 'Lunch')
+  assert.equal(j2.kind, 'open')
+  assert.equal(j2.picks[0].itemId, 'g*1')
+  assert.ok(j2.picks[0].why.length > 0, 'a pick with no reason cannot be judged')
+  assert.ok(j2.delivers.kcal > 0)
+})
+
+test('compare: the plate total is every pick, not just the one shown', () => {
+  const [j2] = compareOn('2026-08-23', 'Lunch')
+  const summed = j2.picks.reduce((a, p) => a + p.delivers.kcal, 0)
+  assert.equal(j2.delivers.kcal, summed)
+  assert.ok(j2.picks.length > 1, 'this menu should produce more than one pick')
+})
+
+test('compare: a hall that never serves the meal says so, and is not dropped', () => {
+  // JCL at breakfast, on a day it is open, so "shut today" cannot be the answer. Silently
+  // omitting it turns "does not serve breakfast" into "does not exist", and an empty box
+  // says neither.
+  const jcl = compareOn('2026-08-24', 'Breakfast').find((h) => h.num === '12(a)')
+  assert.equal(jcl.kind, 'notserved')
+  assert.deepEqual(jcl.picks, [])
+  assert.equal(jcl.text, 'JCL Dining does not serve breakfast. It serves lunch and dinner.')
+})
+
+test('compare: a hall shut today says that instead, and still names its repertoire', () => {
+  const jcl = compareOn('2026-08-23', 'Lunch').find((h) => h.num === '12(a)')
+  assert.equal(jcl.kind, 'closed')
+  assert.deepEqual(jcl.picks, [])
+  assert.equal(
+    jcl.text,
+    'JCL Dining publishes no menu for today. It serves lunch and dinner on the days it is open.',
+  )
+})
+
+test('compare: a meal missing from today but in the repertoire is its own silence', () => {
+  const kins = compareOn('2026-08-23', 'Dinner').find((h) => h.num === '03')
+  // Kins serves dinner nowhere in this window, so it is 'notserved'; J2 is the control.
+  assert.equal(kins.kind, 'notserved')
+
+  const hall = {
+    name: 'Kins Dining',
+    days: [
+      { date: '2026-08-23', meals: [{ meal: 'Lunch', stations: [] }] },
+      { date: '2026-08-24', meals: [{ meal: 'Dinner', stations: [] }] },
+    ],
+  }
+  const availability = hallAvailability(hall, '2026-08-23', 'Dinner')
+  assert.equal(availability.kind, 'notoday')
+  assert.equal(availability.text, 'No dinner menu for today at Kins Dining.')
+})
+
+test('compare: a hall with nothing scraped is not described as shut', () => {
+  const availability = hallAvailability({ name: 'Whitis', days: [] }, '2026-08-23', 'Lunch')
+  assert.equal(availability.kind, 'unlisted')
+  assert.equal(availability.text, 'No menu published for Whitis at the moment.')
+})
+
+test('compare: a hall whose whole line is filtered out says so rather than showing nothing', () => {
+  const beefOnly = {
+    items: { 'b*1': BEEF },
+    halls: [{
+      name: 'Kins Dining',
+      num: '03',
+      days: [{ date: '2026-08-23', meals: [{ meal: 'Lunch', stations: stationOf('b*1') }] }],
+    }],
+  }
+  const [kins] = compareHalls(beefOnly, {
+    date: '2026-08-23', mealName: 'Lunch', need: needVector(TARGETS, {}), profile: PROFILE,
+  })
+  assert.equal(kins.kind, 'nofit')
+  assert.deepEqual(kins.picks, [])
+  assert.equal(kins.text, "Nothing on Kins Dining's lunch line fits what you have left.")
+})
+
+test('compare: restrictions and ratings apply at every hall alike', () => {
+  // Items are keyed by RecNumAndPort, so the same recipe is the same dish everywhere and a
+  // restriction cannot hold at one hall and leak at another.
+  const halls = compareOn('2026-08-23', 'Lunch')
+  for (const hall of halls) {
+    assert.ok(hall.picks.every((p) => p.itemId !== 'b*1'), `beef reached ${hall.name}`)
+  }
+})
+
+test('compare: the same need vector reaches every hall', () => {
+  // Two halls serving the identical dish must advise the identical portion. A per-hall
+  // divisor would mean three plates measured against three budgets, which is not a
+  // comparison.
+  const menu = {
+    items: { 'g*1': GRILLED },
+    halls: ['A', 'B'].map((name) => ({
+      num: name,
+      name,
+      days: [{ date: '2026-08-23', meals: [{ meal: 'Lunch', stations: stationOf('g*1') }] }],
+    })),
+  }
+  const [a, b] = compareHalls(menu, {
+    date: '2026-08-23', mealName: 'Lunch', need: needVector(TARGETS, {}), profile: PROFILE,
+  })
+  assert.equal(a.picks[0].servings, b.picks[0].servings)
+  assert.equal(a.picks[0].display, b.picks[0].display)
+})
+
+test('compare: the portion string is the one describeServing produced, never a rewrite', () => {
+  const [j2] = compareOn('2026-08-23', 'Lunch')
+  const pick = j2.picks[0]
+  assert.equal(pick.display, describeServing(pick.servings, GRILLED.portion))
+})
+
+test('compare: an empty menu answers with no halls rather than throwing', () => {
+  assert.deepEqual(compareHalls({ halls: [] }, { date: '2026-08-23', mealName: 'Lunch' }), [])
+  assert.deepEqual(compareHalls(undefined, { date: '2026-08-23', mealName: 'Lunch' }), [])
+})
+
+test('itemsForMeal stamps the station and skips ids the menu has no item for', () => {
+  const menu = {
+    items: { 'g*1': GRILLED },
+    halls: [],
+  }
+  const hall = {
+    days: [{ date: '2026-08-23', meals: [{ meal: 'Lunch', stations: [{ name: 'Grill', itemIds: ['g*1', 'gone*1'] }] }] }],
+  }
+  const items = itemsForMeal(menu, hall, '2026-08-23', 'Lunch')
+  assert.equal(items.length, 1)
+  assert.equal(items[0].station, 'Grill')
+  assert.deepEqual(itemsForMeal(menu, hall, '2026-08-23', 'Breakfast'), [])
+})
+
+test('plateDelivers keeps an unpublished nutrient absent rather than totalling it as zero', () => {
+  const picks = [
+    { delivers: { kcal: 100, protein_g: 10 } },
+    { delivers: { kcal: 50 } }, // UT published no protein for this one
+  ]
+  const total = plateDelivers(picks)
+  assert.equal(total.kcal, 150)
+  assert.equal(total.protein_g, 10)
+  assert.ok(!('sodium_mg' in total), 'a nutrient nobody published must not appear as 0')
+})
+
+
+// --- Per-hall nutrition coverage --------------------------------------------
+//
+// The fields are OPTIONAL. Every menu.json committed before 2026-08-23 has none of them, so
+// the app must disclose nothing at all rather than reporting a hall as 0% covered.
+
+test('coverage: absent fields disclose nothing at all', () => {
+  assert.equal(coverageOf({ num: '12', name: 'J2 Dining', days: [] }), null)
+  assert.equal(coverageOf(undefined), null)
+})
+
+test('coverage: a partial set of fields is still nothing, not a guess', () => {
+  assert.equal(coverageOf({ dishes: 94, dishesWithNutrition: 94 }), null)
+  assert.equal(coverageOf({ dishes: 94, dishesWithoutNutrition: 0 }), null)
+})
+
+test('coverage: zero dishes is never reported as "0 of 0"', () => {
+  assert.equal(coverageOf({ dishes: 0, dishesWithNutrition: 0, dishesWithoutNutrition: 0 }), null)
+})
+
+test('coverage: a fully published hall reads as good news, with no caveat clause', () => {
+  const c = coverageOf({ dishes: 94, dishesWithNutrition: 94, dishesWithoutNutrition: 0 })
+  assert.equal(c.text, '94 of 94 dishes this week have published nutrition.')
+  assert.equal(c.unreadable, 0)
+})
+
+test('coverage: a thin hall names how many UT published no label for', () => {
+  const c = coverageOf({ dishes: 100, dishesWithNutrition: 60, dishesWithoutNutrition: 40 })
+  assert.equal(c.text, '60 of 100 dishes this week have published nutrition; UT publishes no label for 40.')
+})
+
+test('coverage: an unreadable label is our failure, counted apart from UT publishing nothing', () => {
+  const c = coverageOf({ dishes: 100, dishesWithNutrition: 60, dishesWithoutNutrition: 38 })
+  assert.equal(c.unreadable, 2)
+  assert.equal(
+    c.text,
+    '60 of 100 dishes this week have published nutrition; UT publishes no label for 38; 2 could not be read.',
+  )
+})
+
+test('coverage: no percentage is ever derived, so no figure can be invented', () => {
+  const c = coverageOf({ dishes: 94, dishesWithNutrition: 94, dishesWithoutNutrition: 0 })
+  assert.ok(!/%/.test(c.text), 'a percentage of a count this small overstates its precision')
+})
+
+test('coverage: a compared hall carries its own coverage, or null', () => {
+  const withFields = structuredClone(COMPARE_MENU)
+  Object.assign(withFields.halls[0], {
+    dishes: 2, dishesWithNutrition: 2, dishesWithoutNutrition: 0,
+  })
+  const halls = compareHalls(withFields, {
+    date: '2026-08-23', mealName: 'Lunch', need: needVector(TARGETS, {}), profile: PROFILE,
+  })
+  assert.equal(halls[0].coverage.text, '2 of 2 dishes this week have published nutrition.')
+  assert.equal(halls[1].coverage, null)
 })

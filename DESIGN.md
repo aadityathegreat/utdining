@@ -359,3 +359,53 @@ consistently refused.
   em-dash.
 - In the rating dialog: the hint distinguishing a named food (global blocklist) from a named
   taste (reweights the scorer), and the 4-second confirmation of which durable rule was written.
+
+---
+
+# Phase 2 — the compare view and the coverage line (specced 2026-08-23)
+
+Two additions, both of which had to fit the Panel grammar rather than bring their own.
+
+## The hall slot
+
+**No new primitive.** A hall's slot in the comparison is the existing `Section` — eyebrow,
+hairline, gutter — wrapped around the existing `Item`, with the existing `.total` summary
+beneath it. The dish itself is drawn by the same `renderPick` the Now tab uses. A second way
+of drawing a dish would eventually disagree with the first about a portion string, and the
+portion string is the one thing in this app that must not drift.
+
+**Stacked, not columnar.** Three plates side by side at 375px is three columns of about
+110px, and the portion figure is the point. Vertical, one hall per slot, in menu order.
+
+**There is no `Field` on this screen.** The rule is one per screen, and the only candidate
+would be "the winning hall" — a ranking across halls that nobody asked the recommender for.
+Three equal panel lines; the choice stays the reader's. A screen with no loud element is the
+correct outcome when the screen's job is a comparison rather than an answer.
+
+**A hall that cannot answer still gets its slot**, carrying one sentence in `.empty`. There
+are four different silences — nothing scraped, shut today, does not serve this meal at all,
+nothing on the line fits — and `hallAvailability` in `recommend.mjs` is the single place that
+tells them apart, shared with the Now tab's empty state so the two cannot drift. Omitting a
+hall would turn "JCL does not serve breakfast" into "JCL does not exist"; an empty box says
+neither.
+
+**The control is `All`, appended to the hall strip**, not a fourth bottom tab. The bottom
+three are fixed. It belongs in the hall strip because it answers the same question that strip
+already asks, and it leaves the meal and mode pickers alone — the comparison is of this meal,
+in this mode, at every hall.
+
+## The coverage line
+
+`"JCL Dining: 94 of 94 dishes this week have published nutrition."` Rendered as an **Aside**
+— body copy, `--mute`, no rule — because it is context about the data behind the screen, not
+a refusal and not a missed target. In the comparison it sits inside each hall's slot as a
+`.caveat`; on a single hall it sits at the foot of the picks region.
+
+**It is silent by default.** The fields are optional and no `menu.json` committed before
+today carries them, so `coverageOf` returns null and nothing is drawn at all. There is no
+"0 of 0" and no percentage. This is the room's null-is-not-zero rule applied to a field whose
+whole subject is unpublished data, and it is the most likely thing to be got wrong by a later
+change.
+
+Added to the disclosure floor above: the coverage sentence when present, and its **absence**
+when the fields are not there.

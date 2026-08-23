@@ -1,7 +1,7 @@
 import {
   recommend, needVector, unservableGaps, shareForMeal, cronometerEntry, cronometerFields,
   deliversFor, mergeConsumed, describeServing, stepServings, MODES, profileForMode, shareForKcal,
-  mealNamesFor, mealsLeft,
+  mealNamesFor, mealsLeft, itemsForMeal, hallAvailability, compareHalls, coverageOf,
   nutrientsOf, SuspectItemError,
 } from './recommend.mjs'
 import {
@@ -104,6 +104,10 @@ let ratingItem = null
 // Neither belongs in the saved profile: both are about right now, not about preferences.
 let hallNum = null
 let mode = 'meal'
+// Whether the picks region is showing one hall or all of them side by side. Deliberately not
+// persisted: "which hall am I standing in" is worth remembering across launches, "was I
+// comparing last time" is not.
+let compare = false
 
 function loadProfile() {
   try {
@@ -140,11 +144,6 @@ function currentMealByClock() {
 
 /** How many meals are still ahead today, counting the one being planned. Dinner is 1,
  *  so the last meal of the day legitimately gets the whole remainder. */
-/** "lunch and dinner", "breakfast, lunch and dinner" — an Oxford-comma-free list. */
-const listWords = (words) => words.length < 2
-  ? (words[0] ?? '')
-  : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`
-
 /** The meals the selected hall serves today, or failing that the ones it serves at all. */
 const mealNamesToday = () => mealNamesFor(currentHall(), todayIso())
 
@@ -280,23 +279,33 @@ async function loadMenu() {
 
 const currentHall = () => menu.halls.find((h) => h.num === hallNum) ?? menu.halls[0]
 
-function itemsForSelection() {
-  const hall = currentHall()
-  const day = hall?.days.find((d) => d.date === todayIso())
-  const meal = day?.meals.find((m) => m.meal === $('#meal').value)
-  if (!meal) return []
-
-  return meal.stations.flatMap((station) =>
-    station.itemIds
-      .map((id) => (menu.items[id] ? { itemId: id, station: station.name, ...menu.items[id] } : null))
-      .filter(Boolean))
-}
+const itemsForSelection = () =>
+  itemsForMeal(menu, currentHall(), todayIso(), $('#meal').value)
 
 // ---------------------------------------------------------------------------
 // Render — Now
 // ---------------------------------------------------------------------------
 
+/**
+ * What the plate is sized against: what is left of the day, divided across the meals still
+ * ahead. A snack or pre-workout plate is sized to a calorie ceiling instead, because "a
+ * share of what is left" is the wrong question for something eaten between meals.
+ *
+ * The meal divisor comes from the SELECTED hall even when comparing, so all three plates are
+ * measured against one budget. See compareHalls.
+ */
+function needForNow() {
+  const dayNeed = needVector(profile.targets, consumedToday())
+  const modeSpec = MODES[mode]
+  const need = modeSpec.kcalCap == null
+    ? shareForMeal(dayNeed, mealsLeftToday())
+    : shareForKcal(dayNeed, modeSpec.kcalCap)
+  return { dayNeed, need, modeSpec }
+}
+
 function renderNow() {
+  if (compare) return renderCompare()
+
   const picksEl = $('#picks')
   const emptyEl = $('#nowempty')
   picksEl.innerHTML = ''
@@ -305,33 +314,20 @@ function renderNow() {
   // Rendered before the early returns: a dish blocked as suspect is exactly the thing to
   // say out loud when the list comes back short, or empty.
   renderBlocked(items)
+  // Deliberately outside every early return: a hall whose menu is thin because UT published
+  // no labels should say so precisely when the screen is empty.
+  renderCoverage([currentHall()])
 
   if (items.length === 0) {
-    // Three different silences, and saying the wrong one is how the app claimed JCL had a
-    // breakfast. A hall with nothing scraped at all is not the same as a hall that is shut
-    // today, and neither is the same as one meal being absent.
-    const hall = currentHall()
-    const serves = mealNamesFor(hall, todayIso())
-    const openToday = hall?.days?.some((d) => d.date === todayIso())
-    emptyEl.textContent = serves.length === 0
-      ? `No menu published for ${hall?.name ?? 'this hall'} at the moment.`
-      : openToday
-        ? `No ${$('#meal').value.toLowerCase()} menu for today at this hall.`
-        : `${hall?.name ?? 'This hall'} publishes no menu for today. It serves `
-          + `${listWords(serves.map((m) => m.toLowerCase()))} on the days it is open.`
+    // Four different silences, and saying the wrong one is how the app claimed JCL had a
+    // breakfast. hallAvailability is the single place that tells them apart, shared with the
+    // compare view so the two can never drift into contradicting each other.
+    emptyEl.textContent = hallAvailability(currentHall(), todayIso(), $('#meal').value).text
     emptyEl.hidden = false
     return
   }
 
-  // What is left of the day, divided across the meals still ahead — this plate is one
-  // meal, not the rest of the day in a single sitting. A snack or pre-workout plate is
-  // sized to a calorie ceiling instead, because "a share of what is left" is the wrong
-  // question for something eaten between meals.
-  const dayNeed = needVector(profile.targets, consumedToday())
-  const modeSpec = MODES[mode]
-  const need = modeSpec.kcalCap == null
-    ? shareForMeal(dayNeed, mealsLeftToday())
-    : shareForKcal(dayNeed, modeSpec.kcalCap)
+  const { dayNeed, need, modeSpec } = needForNow()
   const picks = recommend(items, need, profileForMode(profile, mode), { maxItems: modeSpec.maxItems })
 
   if (picks.length === 0) {
@@ -395,6 +391,121 @@ function renderNow() {
       + 'carries into your later meals.')
     picksEl.append(short)
   }
+}
+
+/**
+ * How much of each hall's week UT published nutrition for.
+ *
+ * Optional by contract, and silent when absent: the committed menu.json carries no coverage
+ * fields until the daily Action next runs, and a hall that publishes everything must never be
+ * reported as "0 of 0". `coverageOf` returns null in that case and nothing is drawn at all.
+ *
+ * Rendered as an aside — body copy, no rule, no colour — because it is context about the
+ * data behind the screen rather than a refusal or a missed target.
+ */
+function renderCoverage(halls) {
+  const box = $('#coverage')
+  box.innerHTML = ''
+  for (const hall of halls) {
+    const coverage = coverageOf(hall)
+    if (!coverage) continue
+    box.append(noteBlock('aside', null, `${hall.name}: ${coverage.text}`))
+  }
+}
+
+/**
+ * Every hall's best plate for the selected meal, in one screen.
+ *
+ * The question walking out of Jester is "J2 or Kins or JCL", and the hall tabs answer it only
+ * by making you tap through them one at a time. Each hall gets its top pick drawn by the same
+ * `renderPick` the Now tab uses — a second way of drawing a dish would eventually disagree
+ * with the first about a portion string, which is the one thing in this app that must not
+ * drift — plus what the whole plate delivers and the recommender's own one-line reason.
+ *
+ * No `Field`. DESIGN.md allows one per screen, and making the winner orange would assert a
+ * ranking across halls that nobody asked the recommender for. Three equal panel lines; the
+ * choice stays the reader's.
+ */
+function renderCompare() {
+  const picksEl = $('#picks')
+  const emptyEl = $('#nowempty')
+  picksEl.innerHTML = ''
+  emptyEl.hidden = true
+
+  const mealName = $('#meal').value
+  const { dayNeed, need, modeSpec } = needForNow()
+  const halls = compareHalls(menu, {
+    date: todayIso(),
+    mealName,
+    need,
+    profile: profileForMode(profile, mode),
+    maxItems: modeSpec.maxItems,
+  })
+
+  // The shared budget, stated once. Every hall below was scored against this exact vector —
+  // that is what makes the three plates comparable, and it is worth saying rather than
+  // leaving the reader to assume it.
+  const budget = document.createElement('div')
+  budget.className = 'total'
+  const proteinBudget = need.protein_g > 0 ? `, ${Math.round(need.protein_g)} g protein` : ''
+  budget.textContent =
+    `Every hall scored against the same ${mealName.toLowerCase()}: `
+    + `${Math.round(need.kcal ?? 0)} cal${proteinBudget}, `
+    + `${Math.round(dayNeed.kcal ?? 0)} left for the whole day.`
+  picksEl.append(budget)
+
+  for (const hall of halls) {
+    const section = document.createElement('section')
+    section.className = 'section hallslot'
+
+    const eyebrow = document.createElement('span')
+    eyebrow.className = 'eyebrow'
+    eyebrow.textContent = hall.name
+    section.append(eyebrow)
+
+    if (hall.picks.length === 0) {
+      // Never an empty box and never a hall left out. The sentence says which silence this
+      // is — shut today, does not serve this meal at all, or nothing on the line fits.
+      const p = document.createElement('p')
+      p.className = 'empty'
+      p.textContent = hall.text
+      section.append(p)
+    } else {
+      section.append(renderPick(hall.picks[0], 1))
+
+      const total = document.createElement('div')
+      total.className = 'total'
+      const rest = hall.picks.length - 1
+      total.textContent =
+        `${Math.round(hall.delivers.kcal ?? 0)} cal, `
+        + `${Math.round(hall.delivers.protein_g ?? 0)} g protein`
+        + (rest > 0 ? ` across this and ${rest} more ${rest === 1 ? 'dish' : 'dishes'} here.` : '.')
+      section.append(total)
+    }
+
+    const coverage = hall.coverage
+    if (coverage) {
+      const note = document.createElement('p')
+      note.className = 'caveat'
+      note.textContent = coverage.text
+      section.append(note)
+    }
+
+    picksEl.append(section)
+  }
+
+  // Quarantined dishes across every hall being compared, not just the selected one. The
+  // union is safe to draw as one list: items are keyed by RecNumAndPort, so the same recipe
+  // at two halls is one entry with one override.
+  const seen = new Set()
+  const allItems = halls.flatMap((h) => h.items).filter((it) => {
+    if (seen.has(it.itemId)) return false
+    seen.add(it.itemId)
+    return true
+  })
+  renderBlocked(allItems)
+  // Per-hall coverage is already inside each slot above; the single-hall box would repeat it.
+  renderCoverage([])
 }
 
 /** Running total for the Now tab, so logging a tray gives feedback without a tab switch. */
@@ -1495,10 +1606,11 @@ function populateHalls() {
   for (const hall of menu.halls) {
     const b = document.createElement('button')
     b.setAttribute('role', 'tab')
-    b.setAttribute('aria-selected', String(hall.num === hallNum))
-    b.className = hall.num === hallNum ? 'on' : ''
+    b.setAttribute('aria-selected', String(!compare && hall.num === hallNum))
+    b.className = !compare && hall.num === hallNum ? 'on' : ''
     b.textContent = hall.name
     b.onclick = () => {
+      compare = false
       hallNum = hall.num
       profile.hallNum = hall.num
       saveProfile()
@@ -1508,6 +1620,26 @@ function populateHalls() {
     }
     box.append(b)
   }
+
+  // "All" sits in the hall strip rather than becoming a fourth bottom tab, because it answers
+  // the same question the strip already asks — which hall — and the bottom three are fixed.
+  // It swaps the picks region for the comparison and leaves the meal and mode pickers alone:
+  // the comparison is of this meal, in this mode, at every hall.
+  if (menu.halls.length > 1) {
+    const b = document.createElement('button')
+    b.setAttribute('role', 'tab')
+    b.setAttribute('aria-selected', String(compare))
+    b.className = compare ? 'on' : ''
+    b.textContent = 'All'
+    b.setAttribute('aria-label', 'Compare every hall')
+    b.onclick = () => {
+      compare = true
+      populateHalls()
+      renderNow()
+    }
+    box.append(b)
+  }
+
   box.hidden = menu.halls.length < 2
 }
 

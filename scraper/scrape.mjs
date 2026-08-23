@@ -4,6 +4,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { parseLabel, parseLongMenu, parseLocations, NoNutritionData } from './parse.mjs'
+import { hallCoverage } from './coverage.mjs'
 import { suspectReasons } from '../nutrition.mjs'
 
 const BASE = 'https://hf-foodpro.austin.utexas.edu/foodpro'
@@ -89,12 +90,20 @@ async function main() {
   // plain object — see the comment on readCache().
   const out = { generatedAt: new Date().toISOString(), halls: [], items: Object.create(null) }
   const seen = new Set()
+  // Dishes UT itself publishes no nutrition for. Kept as a set rather than only a counter so
+  // per-hall coverage can be worked out afterwards: the label fetch is deduplicated across
+  // halls, so a dish skipped at J2 is never re-decided at Kins and the count has to be
+  // reconstructed from the hall's own dish list. See coverage.mjs.
+  const noNutrition = new Set()
   let labelFailures = 0
   let unpublished = 0
   let suspectCount = 0
 
   for (const hall of halls) {
     const hallOut = { num: hall.num, name: hall.name, days: [] }
+    // Distinct dishes this hall serves anywhere in the window, counted whether or not this
+    // hall is the one that happened to fetch the label.
+    const hallDishes = new Set()
 
     for (const date of dates) {
       const dayOut = { date: date.iso, meals: [] }
@@ -117,6 +126,7 @@ async function main() {
           if (!station) stations.push((station = { name: row.station, itemIds: [] }))
           if (!station.itemIds.includes(row.itemId)) station.itemIds.push(row.itemId)
 
+          hallDishes.add(row.itemId)
           if (seen.has(row.itemId)) continue
           seen.add(row.itemId)
 
@@ -129,6 +139,7 @@ async function main() {
                 // UT publishes nothing for this dish. It cannot be recommended, but it
                 // is not evidence the parser has gone stale.
                 unpublished++
+                noNutrition.add(row.itemId)
                 continue
               }
               // One unreadable label costs one dish, not the whole run.
@@ -163,6 +174,12 @@ async function main() {
       if (dayOut.meals.length > 0) hallOut.days.push(dayOut)
     }
 
+    // Added to the hall entry, never replacing anything in it: the halls array is a signed
+    // contract seam and the app reads `num`, `name` and `days` by name. Three ADDED fields,
+    // which every menu.json committed before today is missing — the app treats them as
+    // optional and discloses nothing at all when they are absent.
+    Object.assign(hallOut, hallCoverage(hallDishes, out.items, noNutrition))
+
     if (hallOut.days.length > 0) out.halls.push(hallOut)
   }
 
@@ -183,6 +200,9 @@ async function main() {
     `${labelFailures} label failure(s); ${unpublished} dish(es) with no published nutrition; ` +
     `${suspectCount} dish(es) quarantined as implausible`,
   )
+  for (const h of out.halls) {
+    console.log(`  ${h.name}: ${h.dishesWithNutrition} of ${h.dishes} dishes with nutrition`)
+  }
 }
 
 main().catch((err) => {
