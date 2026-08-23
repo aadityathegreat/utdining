@@ -1,6 +1,7 @@
 import {
   recommend, needVector, unservableGaps, shareForMeal, cronometerEntry, cronometerFields,
   deliversFor, mergeConsumed, describeServing, stepServings, MODES, profileForMode, shareForKcal,
+  mealNamesFor, mealsLeft,
   nutrientsOf, SuspectItemError,
 } from './recommend.mjs'
 import {
@@ -52,8 +53,12 @@ const DEFAULT_PROFILE = {
   itemWeights: {},
   penaltyWeightOverrides: {},
   // Dishes whose implausible UT figures were overridden by hand, so a false positive in the
-  // plausibility checks is never a dead end.
+  // plausibility checks is never a dead end. Revocable in Prefs — an override that cannot be
+  // taken back quietly readmits known-bad data to the plate, the reference and the label.
   allowSuspect: [],
+  // Which hall's tab was last open. A string rather than null so the backup's type check
+  // accepts it; '' means "nothing chosen yet, use the first hall".
+  hallNum: '',
   consumed: null,
   extras: null,
   // What was eaten straight from the app, kept separate from the imported baseline so the
@@ -135,11 +140,16 @@ function currentMealByClock() {
 
 /** How many meals are still ahead today, counting the one being planned. Dinner is 1,
  *  so the last meal of the day legitimately gets the whole remainder. */
+/** "lunch and dinner", "breakfast, lunch and dinner" — an Oxford-comma-free list. */
+const listWords = (words) => words.length < 2
+  ? (words[0] ?? '')
+  : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`
+
+/** The meals the selected hall serves today, or failing that the ones it serves at all. */
+const mealNamesToday = () => mealNamesFor(currentHall(), todayIso())
+
 function mealsLeftToday() {
-  const day = currentHall()?.days.find((d) => d.date === todayIso())
-  const meals = day?.meals.map((m) => m.meal) ?? ['Breakfast', 'Lunch', 'Dinner']
-  const i = meals.indexOf($('#meal').value)
-  return i === -1 ? 1 : meals.length - i
+  return mealsLeft(mealNamesToday(), $('#meal').value)
 }
 
 /** The imported figures for today (Health, CSV or typed), or null if they are from another
@@ -297,7 +307,18 @@ function renderNow() {
   renderBlocked(items)
 
   if (items.length === 0) {
-    emptyEl.textContent = `No ${$('#meal').value.toLowerCase()} menu for today at this hall.`
+    // Three different silences, and saying the wrong one is how the app claimed JCL had a
+    // breakfast. A hall with nothing scraped at all is not the same as a hall that is shut
+    // today, and neither is the same as one meal being absent.
+    const hall = currentHall()
+    const serves = mealNamesFor(hall, todayIso())
+    const openToday = hall?.days?.some((d) => d.date === todayIso())
+    emptyEl.textContent = serves.length === 0
+      ? `No menu published for ${hall?.name ?? 'this hall'} at the moment.`
+      : openToday
+        ? `No ${$('#meal').value.toLowerCase()} menu for today at this hall.`
+        : `${hall?.name ?? 'This hall'} publishes no menu for today. It serves `
+          + `${listWords(serves.map((m) => m.toLowerCase()))} on the days it is open.`
     emptyEl.hidden = false
     return
   }
@@ -805,6 +826,10 @@ function renderBlocked(items) {
     allow.onclick = () => {
       profile.allowSuspect.push(item.itemId)
       saveProfile()
+      // Prefs too: the override list there is the only way to take this back, and Prefs is
+      // rendered once rather than on tab switch, so a new override would not appear in it
+      // until the next launch.
+      renderPrefs()
       renderNow()
     }
     row.append(text, allow)
@@ -1004,6 +1029,7 @@ function renderLogSearch() {
       b.onclick = () => {
         if (!confirm(`UT's figures for ${item.name} do not look right: ${reasons.map((r) => r.message).join('; ')}.\n\nLog it anyway?`)) return
         profile.allowSuspect.push(item.itemId)
+        renderPrefs()
         logAte(item.itemId, 1)
         flash(b, 'Logged')
       }
@@ -1087,6 +1113,40 @@ function renderPrefs() {
     saveProfile(); renderPrefs(); renderNow()
   }))
 
+  // Every override, with the reason the dish was blocked in the first place. Without this
+  // the quarantine was one-way: `Use it anyway` persisted in the profile and nothing could
+  // take it back, so a tap made during one lunch kept known-bad UT figures eligible
+  // indefinitely — in the plate, the nutrition reference and the generated label alike.
+  const overrides = $('#overrides')
+  overrides.innerHTML = ''
+  if (profile.allowSuspect.length === 0) {
+    overrides.innerHTML = '<p class="hint">No overrides. Blocked dishes stay blocked.</p>'
+  }
+  for (const itemId of profile.allowSuspect) {
+    const item = menu?.items[itemId]
+    const reasons = item ? suspectOf({ ...item, itemId }) : []
+    const row = document.createElement('div')
+    row.className = 'row'
+    const text = document.createElement('span')
+    text.className = 'grow'
+    // UT's exact figures, quoted rather than corrected, same as the Now tab's blocked panel.
+    text.textContent = !item
+      ? `${itemId} — not on this week's menu`
+      : reasons.length === 0
+        ? `${item.name} — no longer flagged, so this override does nothing`
+        : `${item.name} — ${reasons.map((r) => r.message).join('; ')}`
+    const revoke = document.createElement('button')
+    revoke.className = 'ghost'
+    revoke.textContent = 'Revoke'
+    revoke.setAttribute('aria-label', `Revoke the override for ${item?.name ?? itemId}`)
+    revoke.onclick = () => {
+      profile.allowSuspect = profile.allowSuspect.filter((id) => id !== itemId)
+      saveProfile(); renderPrefs(); renderNow()
+    }
+    row.append(text, revoke)
+    overrides.append(row)
+  }
+
   const block = $('#blocklist')
   block.innerHTML = ''
   if (profile.ingredientBlocklist.length === 0) {
@@ -1152,7 +1212,7 @@ function renderPrefs() {
 // a more personal thing to paste into Notes than a list of targets.
 const SETTINGS_KEYS = [
   'targets', 'extraTargets', 'carbBasis', 'restrictions', 'refluxFilter',
-  'ingredientBlocklist', 'itemWeights', 'penaltyWeightOverrides', 'allowSuspect',
+  'ingredientBlocklist', 'itemWeights', 'penaltyWeightOverrides', 'allowSuspect', 'hallNum',
 ]
 
 function settingsBlob() {
@@ -1427,6 +1487,9 @@ $('#notedlg').onclose = () => {
 function populateHalls() {
   const box = $('#halltabs')
   box.innerHTML = ''
+  // The stored hall wins, but only while it still exists: halls come and go with the
+  // semester, and a remembered number that UT has stopped listing must not blank the screen.
+  if (hallNum == null) hallNum = profile.hallNum || null
   if (!menu.halls.some((h) => h.num === hallNum)) hallNum = menu.halls[0]?.num ?? null
 
   for (const hall of menu.halls) {
@@ -1437,6 +1500,8 @@ function populateHalls() {
     b.textContent = hall.name
     b.onclick = () => {
       hallNum = hall.num
+      profile.hallNum = hall.num
+      saveProfile()
       populateHalls()
       populateMeals()
       renderNow()
@@ -1462,8 +1527,7 @@ function populateModes() {
 
 function populateMeals() {
   const sel = $('#meal')
-  const day = currentHall()?.days.find((d) => d.date === todayIso())
-  const meals = day?.meals.map((m) => m.meal) ?? ['Breakfast', 'Lunch', 'Dinner']
+  const meals = mealNamesToday()
   const preferred = currentMealByClock()
 
   sel.innerHTML = ''

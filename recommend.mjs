@@ -395,6 +395,44 @@ export function cronometerEntry(item, servings, options) {
  * Splits what is left of the day across the meals still to come. Without this the
  * recommender sizes a single lunch to cover everything not yet eaten that day.
  */
+/**
+ * Which meals a hall serves on a given date.
+ *
+ * Falls back to the hall's own repertoire — every meal name it publishes anywhere in the
+ * scraped window, in the order it first publishes them — and never to a hardcoded
+ * Breakfast/Lunch/Dinner. That fallback was written when J2 was the only hall and every
+ * hall served three meals. JCL Dining serves lunch and dinner only, so the old default
+ * offered a breakfast that does not exist and, worse, told `shareForMeal` that two more
+ * meals were still coming — sizing a single plate against a third of the day.
+ *
+ * An empty array is a real answer: a hall with nothing scraped serves nothing we know of,
+ * and inventing meals for it is what caused the bug.
+ */
+export function mealNamesFor(hall, date) {
+  const day = hall?.days?.find((d) => d.date === date)
+  if (day) return day.meals.map((m) => m.meal)
+
+  const seen = []
+  for (const d of hall?.days ?? []) {
+    for (const m of d.meals) if (!seen.includes(m.meal)) seen.push(m.meal)
+  }
+  return seen
+}
+
+/**
+ * How many of the day's meals are still ahead, this one included.
+ *
+ * Counted against the meals the hall actually serves, so a hall that skips breakfast does
+ * not get its lunch plate sized as though breakfast were still to come. An unknown meal
+ * counts as the last one: spending the whole remainder on a plate is the safe direction to
+ * be wrong in, since the alternative is advising a fraction of what is left and calling the
+ * day done.
+ */
+export function mealsLeft(mealNames, selected) {
+  const i = mealNames.indexOf(selected)
+  return i === -1 ? 1 : mealNames.length - i
+}
+
 export function shareForMeal(need, mealsLeft) {
   const n = Math.max(1, mealsLeft)
   return Object.fromEntries(Object.entries(need).map(([k, v]) => [k, v / n]))

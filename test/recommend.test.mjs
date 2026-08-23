@@ -2,9 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   recommend, scoreItem, needVector, isExcluded, describeServing, roundServings,
-  stepServings, LOG_STEP, MIN_LOG_SERVINGS, MAX_LOG_SERVINGS,
+  stepServings, LOG_STEP, MIN_LOG_SERVINGS, MAX_LOG_SERVINGS, mealNamesFor, mealsLeft,
   cronometerEntry, cronometerFields, deliversFor, mergeConsumed, MODES, profileForMode,
-  shareForKcal, nutrientsOf, SuspectItemError,
+  shareForKcal, shareForMeal, nutrientsOf, SuspectItemError,
 } from '../recommend.mjs'
 
 const nut = (o) => ({
@@ -411,4 +411,63 @@ test('a stepped weight portion still refuses to invent grams', () => {
   const stepped = describeServing(stepServings(1, 1), ladle)
   assert.equal(stepped, '1.5 ladles (4 ozL each)')
   assert.ok(!/\bg\b/.test(stepped), 'a ladle count must never carry a gram figure')
+})
+
+
+// --- Halls that do not serve three meals ------------------------------------
+//
+// The old fallback was a hardcoded ['Breakfast','Lunch','Dinner'], written when J2 was the
+// only hall. JCL Dining serves lunch and dinner, so it offered a breakfast that does not
+// exist and told shareForMeal two more meals were coming.
+
+const jcl = {
+  num: '12(a)',
+  name: 'JCL Dining',
+  days: [
+    { date: '2026-08-24', meals: [{ meal: 'Lunch', stations: [] }, { meal: 'Dinner', stations: [] }] },
+    { date: '2026-08-25', meals: [{ meal: 'Lunch', stations: [] }, { meal: 'Dinner', stations: [] }] },
+  ],
+}
+
+test('a hall serving lunch and dinner is never given a breakfast', () => {
+  assert.deepEqual(mealNamesFor(jcl, '2026-08-24'), ['Lunch', 'Dinner'])
+  // The day before it opens: the repertoire, not an invented three.
+  assert.deepEqual(mealNamesFor(jcl, '2026-08-23'), ['Lunch', 'Dinner'])
+})
+
+test('a hall with nothing scraped serves nothing we know of', () => {
+  // An empty list is the honest answer. Inventing meals here is what caused the bug.
+  assert.deepEqual(mealNamesFor({ num: '12(a)', days: [] }, '2026-08-23'), [])
+  assert.deepEqual(mealNamesFor(undefined, '2026-08-23'), [])
+})
+
+test('the repertoire keeps the order the hall publishes in', () => {
+  const hall = {
+    days: [
+      { date: '2026-08-24', meals: [{ meal: 'Lunch' }, { meal: 'Dinner' }] },
+      { date: '2026-08-25', meals: [{ meal: 'Breakfast' }, { meal: 'Lunch' }] },
+    ],
+  }
+  assert.deepEqual(mealNamesFor(hall, '2026-08-26'), ['Lunch', 'Dinner', 'Breakfast'])
+})
+
+test('meals left is counted against what the hall actually serves', () => {
+  // Lunch at JCL leaves two meals, not three. With the old fallback this returned 3 and
+  // shareForMeal sized the plate at a third of the day.
+  assert.equal(mealsLeft(['Lunch', 'Dinner'], 'Lunch'), 2)
+  assert.equal(mealsLeft(['Lunch', 'Dinner'], 'Dinner'), 1)
+  assert.equal(mealsLeft(['Breakfast', 'Lunch', 'Dinner'], 'Lunch'), 2)
+})
+
+test('an unknown meal spends the whole remainder rather than a fraction of it', () => {
+  assert.equal(mealsLeft(['Lunch', 'Dinner'], 'Breakfast'), 1)
+  assert.equal(mealsLeft([], 'Lunch'), 1)
+})
+
+test('the plate a JCL lunch is sized against is half the day, not a third', () => {
+  const need = { kcal: 1800, protein_g: 120 }
+  const jclLunch = shareForMeal(need, mealsLeft(['Lunch', 'Dinner'], 'Lunch'))
+  assert.equal(jclLunch.kcal, 900)
+  const wouldHaveBeen = shareForMeal(need, 3)
+  assert.equal(wouldHaveBeen.kcal, 600)
 })
