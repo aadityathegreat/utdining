@@ -2,6 +2,7 @@ import {
   recommend, needVector, unservableGaps, shareForMeal, cronometerEntry, cronometerFields,
   deliversFor, mergeConsumed, describeServing, stepServings, MODES, profileForMode, shareForKcal,
   cronometerPayload,
+  QUESTIONS, nextQuestion, answerQuestion, finishFirstRun, interviewProgress,
   mealNamesFor, mealsLeft, itemsForMeal, hallAvailability, compareHalls, coverageOf,
   nutrientsOf, SuspectItemError,
 } from './recommend.mjs'
@@ -60,6 +61,9 @@ const DEFAULT_PROFILE = {
   // Which hall's tab was last open. A string rather than null so the backup's type check
   // accepts it; '' means "nothing chosen yet, use the first hall".
   hallNum: '',
+  // What the interview has already put to him, so a question is not asked twice and a skip is
+  // remembered as "not now" rather than as an answer. See QUESTIONS in recommend.mjs.
+  interview: { done: false, seen: {} },
   consumed: null,
   extras: null,
   // What was eaten straight from the app, kept separate from the imported baseline so the
@@ -422,6 +426,10 @@ function renderNow() {
       + 'carries into your later meals.')
     picksEl.append(short)
   }
+
+  // Last, deliberately. The picks are what the screen is for; a question is worth asking only
+  // once the food has been answered.
+  renderInterviewPrompt(picksEl)
 }
 
 /**
@@ -553,6 +561,7 @@ function renderCompare() {
   renderBlocked(allItems)
   // Per-hall coverage is already inside each slot above; the single-hall box would repeat it.
   renderCoverage([])
+  renderInterviewPrompt(picksEl)
 }
 
 /** Running total for the Now tab, so logging a tray gives feedback without a tab switch. */
@@ -1430,6 +1439,8 @@ function renderPrefs() {
 const SETTINGS_KEYS = [
   'targets', 'extraTargets', 'carbBasis', 'restrictions', 'refluxFilter',
   'ingredientBlocklist', 'itemWeights', 'penaltyWeightOverrides', 'allowSuspect', 'hallNum',
+  // Restoring without this re-runs first run on a phone that has already answered everything.
+  'interview',
 ]
 
 function settingsBlob() {
@@ -1467,6 +1478,15 @@ function restoreSettings(text) {
   // measured against. Anything but the two known settings falls back to total carbs.
   if (profile.carbBasis !== 'net') profile.carbBasis = 'total'
   profile.allowSuspect = (profile.allowSuspect ?? []).filter((id) => typeof id === 'string')
+
+  // Same reason as carbBasis. A malformed interview would not crash — every read of it goes
+  // through a default spread — but it would silently mean "already asked everything" or
+  // "never asked anything", and both are wrong answers to a question about what he was asked.
+  const seen = profile.interview?.seen
+  profile.interview = {
+    done: profile.interview?.done === true,
+    seen: seen && typeof seen === 'object' && !Array.isArray(seen) ? seen : {},
+  }
 
   saveProfile()
   renderPrefs()
@@ -1698,6 +1718,157 @@ $('#notedlg').onclose = () => {
   renderPrefs()
 }
 
+// ---------------------------------------------------------------------------
+// The interview
+// ---------------------------------------------------------------------------
+
+/**
+ * Asks a question and writes the answer straight into the profile.
+ *
+ * The bank, the ordering and the skip rules are all in `recommend.mjs` — this is only the
+ * dialog. Every answer goes through `answerQuestion`, so the field it writes to and the
+ * record of having asked can never come apart.
+ *
+ * `mode` is 'first' to walk the first-run questions in one sitting, or 'one' for the single
+ * question the Now tab offers later.
+ */
+function openInterview(mode) {
+  const dlg = $('#interviewdlg')
+  const context = { halls: menu?.halls ?? [] }
+
+  const step = () => {
+    const question = nextQuestion(profile, { date: todayIso(), context, firstRunOnly: mode === 'first' })
+    if (!question) {
+      if (mode === 'first') {
+        profile = finishFirstRun(profile)
+        saveProfile()
+      }
+      if (dlg.open) dlg.close()
+      afterInterview()
+      return
+    }
+    render(question)
+    if (!dlg.open) dlg.showModal()
+  }
+
+  const commit = (question, value) => {
+    profile = answerQuestion(profile, question.id, value, { date: todayIso() })
+    saveProfile()
+    // One question a day means a single answer can be the last one, so the gate that decides
+    // whether to offer another is re-evaluated rather than assumed.
+    if (mode === 'one') { dlg.close(); afterInterview(); return }
+    step()
+  }
+
+  function render(question) {
+    const progress = interviewProgress(profile)
+    $('#interviewstep').textContent = mode === 'first'
+      ? `Setting up — ${QUESTIONS.filter((q) => q.first).findIndex((q) => q.id === question.id) + 1}`
+        + ` of ${QUESTIONS.filter((q) => q.first).length}`
+      : `One question — ${progress.answered} of ${progress.total} answered so far`
+    $('#interviewask').textContent = question.ask
+    $('#interviewwhy').textContent = question.why
+
+    const box = $('#interviewinput')
+    box.innerHTML = ''
+    let value
+
+    if (question.kind === 'chips' || question.kind === 'choice') {
+      const multi = question.kind === 'chips'
+      const current = question.current ? question.current(profile) : (multi ? [] : null)
+      value = multi ? [...current] : current
+      const chips = document.createElement('div')
+      chips.className = 'chips'
+      const paint = () => {
+        chips.innerHTML = ''
+        for (const option of question.options(context)) {
+          const on = multi ? value.includes(option.value) : value === option.value
+          chips.append(chip(option.label, on, () => {
+            if (multi) {
+              value = value.includes(option.value)
+                ? value.filter((v) => v !== option.value)
+                : [...value, option.value]
+            } else {
+              value = option.value
+            }
+            paint()
+          }))
+        }
+      }
+      paint()
+      box.append(chips)
+    } else {
+      const input = document.createElement('input')
+      input.id = 'interviewvalue'
+      if (question.kind === 'number') {
+        Object.assign(input, { type: 'number', inputMode: 'decimal', min: '0' })
+        input.value = question.current ? question.current(profile) : ''
+      } else {
+        input.type = 'text'
+        input.placeholder = question.placeholder ?? ''
+      }
+      if (question.unit) input.setAttribute('aria-label', `${question.ask} in ${question.unit}`)
+      box.append(input)
+      value = undefined
+    }
+
+    $('#interviewsave').onclick = () => {
+      if (question.kind === 'number') {
+        const typed = Number($('#interviewvalue').value)
+        // A blank box is not a zero. Nothing is written and the question comes back another
+        // day, which is the same rule the rest of this app lives by.
+        if (!Number.isFinite(typed) || typed <= 0) return commit(question, undefined)
+        return commit(question, typed)
+      }
+      if (question.kind === 'text') return commit(question, $('#interviewvalue').value)
+      if (value == null) return commit(question, undefined)
+      return commit(question, value)
+    }
+    $('#interviewskip').onclick = () => commit(question, undefined)
+  }
+
+  step()
+}
+
+/** Everything the interview could have changed, redrawn once rather than per answer. */
+function afterInterview() {
+  if (menu) {
+    // The hall he just named is the hall he is standing in, so it takes effect now rather than
+    // at the next launch. populateHalls only consults the profile when nothing is selected yet,
+    // and by this point start() has already selected one.
+    if (profile.hallNum) hallNum = profile.hallNum
+    populateHalls()
+    populateMeals()
+  }
+  renderPrefs()
+  renderFuel()
+  renderNow()
+}
+
+/**
+ * The occasional prompt, on the Now tab.
+ *
+ * One question a day at most, and never during the meal-planning glance itself — it is a quiet
+ * aside under the picks, not a modal in the way of the food. `nextQuestion` returns null once
+ * something has been put today, so this disappears for the rest of the day the moment it is
+ * answered or skipped.
+ */
+function renderInterviewPrompt(into) {
+  if (!profile.interview?.done) return
+  const question = nextQuestion(profile, { date: todayIso(), context: { halls: menu?.halls ?? [] } })
+  if (!question) return
+
+  const note = noteBlock('aside', null,
+    'One question, when you have a moment — the app asks rather than only watching what you rate.')
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'ghost'
+  button.textContent = question.ask
+  button.onclick = () => openInterview('one')
+  note.append(button)
+  into.append(note)
+}
+
 // Tabs rather than a dropdown: with two halls open the question is "J2 or JCL", and that
 // should be one tap. Hidden entirely while only one hall is listed — a tab strip with a single
 // tab is furniture. It appears on its own the day the scrape finds a second hall.
@@ -1793,6 +1964,10 @@ async function start() {
   renderPrefs()
   renderNow()
   renderLogStrip()
+
+  // After the first paint, not before it: the app should have shown what it is for before it
+  // asks anything. It also needs the menu, or the hall question has no halls to offer.
+  if (!profile.interview?.done) openInterview('first')
 }
 
 if ('serviceWorker' in navigator) {
