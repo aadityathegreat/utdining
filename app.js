@@ -11,8 +11,24 @@ import {
 } from './cronometer.mjs'
 import { suspectOf } from './nutrition.mjs'
 import { labelModel, labelBlob } from './label.mjs'
+import {
+  visionCandidates, visionBody, visionHeaders, readVisionMessage, visionCost,
+  looksLikeApiKey, VISION_ENDPOINT, MAX_IMAGE_EDGE, VisionError,
+} from './vision.mjs'
 
 const PROFILE_KEY = 'utdining.profile'
+
+// Deliberately its own localStorage entry rather than a field on the profile.
+//
+// Two reasons, both about the Backup section in Prefs. `settingsBlob` copies an allowlist of
+// profile keys, and the whole point of that blob is that it gets pasted into notes apps and
+// messages — a key riding along in it would be a published key the moment he backs up. And
+// `restoreSettings` accepts pasted text: a profile-shaped key field is a key-shaped hole for
+// anything he pastes in. Keeping it out of the profile makes both impossible rather than
+// careful.
+const VISION_KEY = 'utdining.visionkey'
+
+const visionKey = () => localStorage.getItem(VISION_KEY) ?? ''
 
 // Energy and macro targets ship at zero on purpose: they are personal, this repo is
 // public, and a target of 0 simply means "don't score this nutrient". Set them once in
@@ -1140,6 +1156,7 @@ function renderFuel() {
   }
 
   renderLog()
+  renderShot()
   renderLogSearch()
   renderUnservable()
   renderFuelLine()
@@ -1233,24 +1250,232 @@ function renderLogSearch() {
   for (const item of matches) {
     const b = document.createElement('button')
     b.className = 'chip'
-    const reasons = suspectOf(item)
+    const suspect = isSuspect(item)
     // Searching for it by name is a deliberate act, so this warns rather than refuses — but
     // it does not log a figure UT cannot be right about without saying so first.
-    if (reasons.length > 0 && !profile.allowSuspect.includes(item.itemId)) {
-      b.append(icon('alert'), document.createTextNode(` ${item.name} (${item.portion.raw})`))
-      b.onclick = () => {
-        if (!confirm(`UT's figures for ${item.name} do not look right: ${reasons.map((r) => r.message).join('; ')}.\n\nLog it anyway?`)) return
-        profile.allowSuspect.push(item.itemId)
-        renderPrefs()
-        logAte(item.itemId, 1)
-        flash(b, 'Logged')
-      }
-    } else {
-      b.textContent = `${item.name} (${item.portion.raw})`
-      b.onclick = () => { logAte(item.itemId, 1); flash(b, 'Logged') }
-    }
+    if (suspect) b.append(icon('alert'), document.createTextNode(' '))
+    b.append(document.createTextNode(`${item.name} (${item.portion.raw})`))
+    b.onclick = () => { if (logChecked(item, 1)) flash(b, 'Logged') }
     box.append(b)
   }
+}
+
+/** Whether UT's own figures for a dish look wrong and he has not already said "use it
+ *  anyway". Both the search box and the photo rows have to ask this. */
+function isSuspect(item) {
+  return suspectOf(item).length > 0 && !profile.allowSuspect.includes(item.itemId)
+}
+
+/**
+ * Logs a dish, stopping first if UT's figures for it cannot be right.
+ *
+ * The check is here rather than in `logAte` because the plate and the label refuse a suspect
+ * dish outright, and the log deliberately does not: a dish he actually ate is a fact, and
+ * refusing to record it just moves the error out of sight. What the log owes him is the
+ * warning before the figures land in the day's total — and an override that is revocable in
+ * Prefs, the same one the reference and the label honour.
+ *
+ * @returns {boolean} whether it was logged
+ */
+function logChecked(item, servings) {
+  const reasons = suspectOf(item)
+  if (isSuspect(item)) {
+    if (!confirm(`UT's figures for ${item.name} do not look right: ${reasons.map((r) => r.message).join('; ')}.\n\nLog it anyway?`)) return false
+    profile.allowSuspect.push(item.itemId)
+    renderPrefs()
+  }
+  logAte(item.itemId, servings)
+  return true
+}
+
+// ---------------------------------------------------------------------------
+// Render — the tray photo
+// ---------------------------------------------------------------------------
+
+// What the last photo came back with, held here rather than in the profile: it is a proposal
+// awaiting confirmation, not something eaten. Closing the app throws it away, which is right.
+let shotPicks = []
+// Whether the shutter has already said, in a dialog he had to dismiss, where the image goes.
+// Once per launch: the standing line above the shutter says it on every shot, and a modal on
+// every shot would be dismissed without being read, which is worse than not asking.
+let shotDisclosed = false
+
+/** The standing disclosure that sits with the shutter, and the reason it is off when it is. */
+function renderShot() {
+  const box = $('#shotdisclosure')
+  const drop = $('#shotdrop')
+  box.innerHTML = ''
+  const hasKey = visionKey() !== ''
+  drop.hidden = !hasKey
+
+  if (!hasKey) {
+    box.append(noteBlock('aside', 'Camera off',
+      'Reading a photo needs an Anthropic API key, and there is none on this phone. Add one '
+      + 'under Photo key in Prefs. Until then nothing here can send anything anywhere.'))
+    return
+  }
+  box.append(noteBlock('aside', 'Where the photo goes',
+    'Each shot is sent to Anthropic\u2019s API at api.anthropic.com to be identified, and billed '
+    + 'to your key \u2014 about two cents. It is not stored by this app and nothing else on this '
+    + 'phone is sent with it. Remove the key in Prefs to switch this off.'))
+}
+
+/** Whether a key is on this phone, and never the key itself. There is no reason to paint a
+ *  secret onto a screen in a servery, and a masked box that is empty on every launch says
+ *  what he needs to know: whether the camera works. */
+function renderKeyStatus() {
+  const status = $('#keystatus')
+  const has = visionKey() !== ''
+  status.textContent = has
+    ? 'A key is saved on this phone. The tray photo is on.'
+    : 'No key on this phone. The tray photo is off.'
+  status.className = 'status'
+  $('#forgetkey').hidden = !has
+}
+
+/**
+ * The photo, shrunk to what is worth sending.
+ *
+ * Claude reads images in 28px patches and downscales anything past its own limit itself, so
+ * a 12-megapixel phone photo buys no accuracy on a tray — it just costs tokens and, on the
+ * basement WiFi this app was built for, a long upload. JPEG at 0.85 rather than PNG for the
+ * same reason; the artefacts that matter are text ones, and there is no text on a plate.
+ *
+ * `imageOrientation: 'from-image'` is not optional: a phone photo carries its rotation in
+ * EXIF, and a canvas drawn without it hands the model a sideways tray.
+ */
+async function shrinkPhoto(file) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
+  const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(bitmap.width, bitmap.height))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(bitmap.width * scale)
+  canvas.height = Math.round(bitmap.height * scale)
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  bitmap.close?.()
+
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85))
+  if (!blob) throw new VisionError('This phone could not re-encode that photo.')
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(new VisionError('That photo could not be read.'))
+    reader.readAsDataURL(blob)
+  })
+  return { mediaType: 'image/jpeg', data: String(dataUrl).split(',')[1] }
+}
+
+async function identifyTray(file) {
+  const status = $('#shotstatus')
+  const say = (text, kind = '') => { status.textContent = text; status.className = `status ${kind}` }
+
+  if (!menu) return say('The menu has not loaded yet.', 'bad')
+  const candidates = visionCandidates(menu, currentHall(), todayIso())
+  if (candidates.length === 0) {
+    return say(`No menu published for ${currentHall()?.name ?? 'this hall'} today, so there is nothing to match the photo against.`, 'bad')
+  }
+  if (!shotDisclosed) {
+    if (!confirm('This photo will be uploaded to Anthropic\u2019s API (api.anthropic.com) to be '
+      + 'identified, and billed to your key.\n\nSend it?')) return
+    shotDisclosed = true
+  }
+
+  shotPicks = []
+  renderShotPicks()
+  say('Reading the photo\u2026')
+
+  try {
+    const image = await shrinkPhoto(file)
+    const res = await fetch(VISION_ENDPOINT, {
+      method: 'POST',
+      headers: visionHeaders(visionKey()),
+      body: JSON.stringify(visionBody(candidates, image)),
+    })
+    const message = await res.json()
+    shotPicks = readVisionMessage(message, candidates)
+
+    const cost = visionCost(message.usage)
+    const spent = cost == null ? '' : ` (${cost < 0.01 ? '<1' : Math.round(cost * 100)}\u00a2)`
+    say(shotPicks.length === 0
+      ? `Nothing on today\u2019s menu matched that photo${spent}. Log it by name below.`
+      : `${shotPicks.length} dish${shotPicks.length === 1 ? '' : 'es'} recognised${spent}. Nothing is logged until you tap Log.`)
+  } catch (err) {
+    // A CORS or offline failure is a TypeError with a uselessly generic message, and it is
+    // the likeliest failure in a basement. Name the two real causes rather than echo it.
+    say(err instanceof VisionError ? err.message
+      : `Could not reach the API (${err.message}). Check the signal, and check the key in Prefs.`, 'bad')
+  }
+  renderShotPicks()
+}
+
+/**
+ * The proposed rows.
+ *
+ * Every one of them is a proposal with a Log button, never an entry. The photo prefills where
+ * he gave no amount and it must never overwrite one he did give — on an amorphous pile its
+ * honest accuracy is about \u00b11 serving, which is worse than his own memory of having taken
+ * two. So the amount arrives in the same stepper the rest of the app uses, and the row says
+ * out loud when the model itself was unsure.
+ */
+function renderShotPicks() {
+  const box = $('#shotpicks')
+  box.innerHTML = ''
+  if (shotPicks.length === 0) return
+
+  for (const [i, pick] of shotPicks.entries()) {
+    const row = document.createElement('div')
+    row.className = 'row'
+
+    const text = document.createElement('span')
+    text.className = 'grow'
+    if (pick.confidence === 'low') text.append(icon('alert', 'Unsure'), document.createTextNode(' '))
+    text.append(document.createTextNode(
+      `${pick.name} — ${pick.station} · ${describeServing(pick.servings, pick.portion)}`))
+    row.append(text)
+
+    const stepper = document.createElement('div')
+    stepper.className = 'stepper'
+    for (const [delta, name, label] of [[-1, 'minus', 'Less'], [1, 'plus', 'More']]) {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = 'ghost'
+      b.append(icon(name))
+      b.setAttribute('aria-label', `${label} ${pick.name}`)
+      b.onclick = () => {
+        shotPicks[i] = { ...pick, servings: stepServings(pick.servings, delta) }
+        renderShotPicks()
+      }
+      stepper.append(b)
+    }
+    row.append(stepper)
+
+    const log = document.createElement('button')
+    log.className = 'primary'
+    log.textContent = 'Log'
+    log.onclick = () => {
+      const item = menu?.items[pick.itemId]
+      if (!item) return
+      if (!logChecked({ ...item, itemId: pick.itemId }, pick.servings)) return
+      shotPicks.splice(i, 1)
+      renderShotPicks()
+    }
+    row.append(log)
+
+    const drop = document.createElement('button')
+    drop.className = 'ghost'
+    drop.append(icon('close'))
+    drop.setAttribute('aria-label', `Not ${pick.name}`)
+    drop.onclick = () => { shotPicks.splice(i, 1); renderShotPicks() }
+    row.append(drop)
+
+    box.append(row)
+  }
+
+  if (shotPicks.some((p) => p.confidence === 'low')) {
+    box.append(noteBlock('shortfall', 'Check these',
+      'The marked rows are ones it was not sure about — either which dish it is or how much '
+      + 'is on the plate. A photo cannot measure a loose pile; the stepper can.'))
+  }
+
 }
 
 // The honest half of the micronutrient promise: Cronometer knows about these, and the
@@ -1310,6 +1535,7 @@ function setConsumed(nutrients, source, extras, missing = []) {
 // ---------------------------------------------------------------------------
 
 function renderPrefs() {
+  renderKeyStatus()
   const box = $('#restrictions')
   box.innerHTML = ''
   for (const icon of RESTRICTION_ICONS) {
@@ -1552,6 +1778,40 @@ for (const tab of document.querySelectorAll('.tabs button')) {
 
 $('#logsearch').oninput = renderLogSearch
 
+$('#shot').onchange = (e) => {
+  const file = e.target.files?.[0]
+  // Cleared straight away so the same photo can be retaken and re-sent: a file input holding
+  // the same file fires no change event the second time.
+  e.target.value = ''
+  if (file) identifyTray(file)
+}
+
+$('#addkey').onsubmit = (e) => {
+  e.preventDefault()
+  const key = $('#keyinput').value.trim()
+  const status = $('#keystatus')
+  if (!looksLikeApiKey(key)) {
+    status.textContent = 'That does not look like an Anthropic key. They start sk-ant- and are much longer.'
+    status.className = 'status bad'
+    return
+  }
+  localStorage.setItem(VISION_KEY, key)
+  // Not left sitting in the box: this is a shared-screen risk for no benefit, and the status
+  // line below already says the key is saved.
+  $('#keyinput').value = ''
+  renderKeyStatus()
+  renderShot()
+}
+
+$('#forgetkey').onclick = () => {
+  if (!confirm('Remove the API key from this phone? The tray photo stops working until you paste it back.')) return
+  localStorage.removeItem(VISION_KEY)
+  shotPicks = []
+  renderKeyStatus()
+  renderShot()
+  renderShotPicks()
+}
+
 $('#clearlog').onclick = () => {
   if (!confirm('Clear what you logged in the app today? Do this once it is in Cronometer.')) return
   profile.log = null
@@ -1693,9 +1953,13 @@ $('#restorego').onclick = () => {
 }
 
 $('#reset').onclick = () => {
-  if (!confirm('Clear targets, ratings and blocked ingredients on this phone?')) return
+  if (!confirm('Clear targets, ratings, blocked ingredients and the photo key on this phone?')) return
   localStorage.removeItem(PROFILE_KEY)
+  // "Clear everything on this phone" has to include the key, or the one secret in the app is
+  // the one thing the reset leaves behind.
+  localStorage.removeItem(VISION_KEY)
   profile = loadProfile()
+  shotPicks = []
   renderPrefs(); renderFuel(); renderNow()
 }
 

@@ -6,10 +6,15 @@
 <!-- Matches --surface so the status bar is not a third colour claiming to be the background. -->
 <meta name="theme-color" content="#fbf9f4" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#2b2a25" media="(prefers-color-scheme: dark)">
-<!-- img-src allows blob: for the generated Nutrition Facts label only. The image is drawn on
-     a canvas from menu.json and never leaves the phone; blob: cannot name a remote origin, so
-     this does not widen what the page can fetch. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+<!-- img-src allows blob: for the generated Nutrition Facts label and the tray photo's own
+     preview. Both are drawn on this phone; blob: cannot name a remote origin, so neither
+     widens what the page can fetch.
+
+     connect-src names api.anthropic.com and nothing else. That is the ONE destination a
+     tray photo can reach, it is reachable only when a key has been pasted into Prefs, and
+     the shutter says so on every shot. Nothing else in this app makes a network call
+     off-origin. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; font-src 'self'; connect-src 'self' https://api.anthropic.com; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>J2</title>
@@ -47,6 +52,9 @@
     </g>
     <g id="i-alert" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
       <path d="M12 4l9 16H3l9-16Z"/><path d="M12 10v4"/><path d="M12 17h.01"/>
+    </g>
+    <g id="i-camera" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+      <path d="M3 8h4l1.5-2h7L17 8h4v11H3V8Z"/><path d="M12 16.5A3.5 3.5 0 1 0 12 9.5a3.5 3.5 0 0 0 0 7Z"/>
     </g>
     <g id="i-heart" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
       <path d="M12 20S3.5 14.5 3.5 9A4.5 4.5 0 0 1 12 7a4.5 4.5 0 0 1 8.5 2c0 5.5-8.5 11-8.5 11Z"/>
@@ -86,6 +94,29 @@
       </div>
       <div id="loglist"></div>
       <div class="body"><button id="clearlog" class="ghost" hidden>Clear — I've entered these in Cronometer</button></div>
+    </div>
+
+    <div class="section">
+      <span class="eyebrow">Photo of your tray</span>
+      <div class="body">
+        <p class="hint">Take one photo of the whole tray. It is matched against what this hall
+          is serving today, and each dish it recognises lands below as a row you confirm —
+          nothing is logged until you tap <b>Log</b>.</p>
+        <p class="hint"><b>It counts servings, not grams.</b> A single photo cannot measure
+          mass — there is no scale reference in the frame — so it answers in UT's own published
+          servings and the app works out the nutrition from those, exactly as it does for a
+          dish you tap by hand. Expect it to be right about <i>what</i> the dish is and roughly
+          right about <i>how much</i>; fix the amount with the stepper.</p>
+      </div>
+      <!-- The disclosure sits ABOVE the shutter on purpose: where the image goes is something
+           to read before tapping, not after. -->
+      <div class="body" id="shotdisclosure"></div>
+      <label class="drop" id="shotdrop">
+        <input type="file" id="shot" accept="image/*" capture="environment" hidden>
+        <span>Take or choose a photo of your tray</span>
+      </label>
+      <p id="shotstatus" class="status"></p>
+      <div id="shotpicks"></div>
     </div>
 
     <div class="section">
@@ -206,6 +237,25 @@
         <button id="restorego" class="ghost">Restore these settings</button>
       </details>
       <p id="backupstatus" class="status"></p>
+    </div>
+
+    <div class="section">
+      <span class="eyebrow">Photo key</span>
+      <div class="body">
+        <p class="hint">The tray photo is read by Claude, which needs an API key from
+          <code>console.anthropic.com</code>. Paste yours here and it stays in this browser's
+          storage on this phone — it is <b>not</b> in the repo and <b>not</b> in the settings
+          backup above, so copying your settings never copies your key.</p>
+        <p class="hint">Every photo you send goes to Anthropic's API and is billed to that key,
+          roughly two cents a shot. Nothing else in this app leaves the phone, and without a key
+          the camera section stays off.</p>
+        <form id="addkey" class="picker">
+          <input id="keyinput" type="password" autocomplete="off" placeholder="sk-ant-..." aria-label="Anthropic API key">
+          <button class="primary">Save key</button>
+        </form>
+        <p id="keystatus" class="status"></p>
+        <button id="forgetkey" class="ghost" hidden>Forget the key on this phone</button>
+      </div>
     </div>
 
     <div class="section">

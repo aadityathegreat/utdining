@@ -20,7 +20,7 @@ so the first run fetches a few hundred labels and every run after fetches only n
 ## Running it
 
 ```bash
-node --test 'test/*.test.mjs'    # 34 tests, all against real committed FoodPro pages
+node --test 'test/*.test.mjs'    # 210 tests, all against real committed FoodPro pages
 node scraper/scrape.mjs          # refresh data/menu.json
 python3 -m http.server 8777      # then open http://localhost:8777
 ```
@@ -51,6 +51,33 @@ convert to grams. `ozL` is a *ladle* — a volume scoop — and never becomes gr
 items are shown as pieces or slices. A gram figure appears only where one is genuinely
 derivable, and there is a test asserting it.
 
+This is also why the tray photo (below) answers in servings and not in grams.
+
+## The tray photo
+
+Optional, off by default, and the only thing in this app that makes a network call anywhere
+but this repo. One photo of a tray is matched against **what that hall is serving today** —
+about 140 dishes with station names, a closed list, not the open world — and each dish it
+recognises appears as a row you confirm. Confirming logs it exactly as tapping the dish by
+hand would: the nutrition comes from `menu.json`, never from the photo.
+
+It answers in **servings, not grams**, and that is not a limitation to be engineered away.
+A single camera cannot measure mass — monocular depth carries no metric scale without a
+reference object in frame — so a gram figure from a photo would be a confident invention, and
+this app already refuses two of those. The model returns one of `{0.5, 1, 1.5, 2, 3}` servings
+of a published portion, which is a five-way classification rather than a measurement, and the
+row lands in the same stepper as everything else. Expect it to be reliable about *which* dish
+and roughly right about *how much*.
+
+- **The key is yours.** Paste an Anthropic API key under *Photo key* in Prefs. It lives in its
+  own `localStorage` entry — never in the profile, so *Copy my settings* cannot leak it, and
+  never in this repo, because a public repo cannot hold a secret. No key, no camera.
+- **The model never names a dish freely.** It answers with a line number from the list this app
+  built, and `readVisionPicks` rebuilds every row from `menu.json`. A `grams` or `kcal` field in
+  the response has nowhere to land even if the schema is one day loosened.
+- **Cost is shown per shot** (about 2¢ on `claude-opus-5`), because it is your bill.
+- `connect-src` in the CSP names `api.anthropic.com` and nothing else.
+
 ## Gotchas worth knowing before editing
 
 - Diet icons (`Beef`, `Pork`, `Vegan`, `Halal`) come from the **menu page images**, not the
@@ -73,5 +100,6 @@ derivable, and there is a test asserting it.
 | `scraper/fixtures/` | real captured pages — the golden tests run against these |
 | `recommend.mjs` | scoring, portioning, filters. Shared by app and tests |
 | `cronometer.mjs` | Daily Nutrition CSV parser |
+| `vision.mjs` | the tray photo: candidate list, request, and the whitelist that reads the answer |
 | `app.js` | UI only |
 | `tools/make-icons.mjs` | one-shot icon generator (no image libraries needed) |
