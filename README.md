@@ -75,7 +75,15 @@ and roughly right about *how much*.
 - **The model never names a dish freely.** It answers with a line number from the list this app
   built, and `readVisionPicks` rebuilds every row from `menu.json`. A `grams` or `kcal` field in
   the response has nowhere to land even if the schema is one day loosened.
-- **Cost is shown per shot** (about 2¢ on `claude-opus-5`), because it is your bill.
+- **It can ask for another angle.** When one view leaves it unsure of an amount, it asks for a
+  second — from the side, closer in, angled, or straight down — and names the dishes that view
+  would settle. Tapping the offer sends the new photo *together with* the ones already taken,
+  up to three of one tray, so the answer improves instead of being replaced by a second opinion.
+  What it may ask for is one of five fixed shots this app has wording for; the sentence on the
+  screen is the app's, not the model's. The offer is never a requirement — the stepper is still
+  the cheapest fix when you already know the amount.
+- **Cost is shown for the tray**, cumulative across its angles (about 2¢ per photo on
+  `claude-opus-5`), because it is your bill.
 - `connect-src` in the CSP names `api.anthropic.com` and nothing else.
 
 ## Gotchas worth knowing before editing

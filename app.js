@@ -13,7 +13,7 @@ import { suspectOf } from './nutrition.mjs'
 import { labelModel, labelBlob } from './label.mjs'
 import {
   visionCandidates, visionBody, visionHeaders, readVisionMessage, visionCost,
-  looksLikeApiKey, VISION_ENDPOINT, MAX_IMAGE_EDGE, VisionError,
+  looksLikeApiKey, VISION_ENDPOINT, MAX_IMAGE_EDGE, MAX_IMAGES, ANGLE_COPY, VisionError,
 } from './vision.mjs'
 
 const PROFILE_KEY = 'utdining.profile'
@@ -1295,10 +1295,24 @@ function logChecked(item, servings) {
 // What the last photo came back with, held here rather than in the profile: it is a proposal
 // awaiting confirmation, not something eaten. Closing the app throws it away, which is right.
 let shotPicks = []
+// Every photo of the tray being read right now, oldest first. Kept because a second angle is
+// only worth taking if it is sent WITH the first — two separate one-photo requests produce two
+// separate answers to reconcile by hand, which is the tedium this feature exists to remove.
+let shotImages = []
+// A further view the model asked for, or null. It chooses from a fixed set of five; the
+// sentence on the screen is this app's.
+let shotAsk = null
+// What this tray has cost so far, across every angle. Cumulative rather than per-shot: the
+// number that matters once a second photo is possible is what the tray cost, not the last
+// request.
+let shotSpent = 0
 // Whether the shutter has already said, in a dialog he had to dismiss, where the image goes.
 // Once per launch: the standing line above the shutter says it on every shot, and a modal on
 // every shot would be dismissed without being read, which is worse than not asking.
 let shotDisclosed = false
+// Set by the "add an angle" button just before it opens the file picker, so the one file input
+// can mean either "another view of this tray" or "a new tray".
+let shotAppend = false
 
 /** The standing disclosure that sits with the shutter, and the reason it is off when it is. */
 function renderShot() {
@@ -1364,7 +1378,7 @@ async function shrinkPhoto(file) {
   return { mediaType: 'image/jpeg', data: String(dataUrl).split(',')[1] }
 }
 
-async function identifyTray(file) {
+async function identifyTray(file, append = false) {
   const status = $('#shotstatus')
   const say = (text, kind = '') => { status.textContent = text; status.className = `status ${kind}` }
 
@@ -1379,22 +1393,36 @@ async function identifyTray(file) {
     shotDisclosed = true
   }
 
+  // A photo that is not an added angle is a new tray, and a new tray owes nothing to the last
+  // one — not its images, not its running cost.
+  if (!append) { shotImages = []; shotSpent = 0 }
+
   shotPicks = []
+  shotAsk = null
   renderShotPicks()
-  say('Reading the photo\u2026')
+  const sending = shotImages.length + 1
+  say(sending === 1 ? 'Reading the photo\u2026' : `Reading all ${sending} photos of this tray\u2026`)
 
   try {
     const image = await shrinkPhoto(file)
+    const images = [...shotImages, image]
     const res = await fetch(VISION_ENDPOINT, {
       method: 'POST',
       headers: visionHeaders(visionKey()),
-      body: JSON.stringify(visionBody(candidates, image)),
+      body: JSON.stringify(visionBody(candidates, images)),
     })
     const message = await res.json()
-    shotPicks = readVisionMessage(message, candidates)
+    const answer = readVisionMessage(message, candidates, images.length)
+    // Only kept once the request came back: a photo that failed to send should not count
+    // against the three-photo ceiling, and should not be re-sent with the retry.
+    shotImages = images
+    shotPicks = answer.picks
+    shotAsk = answer.another
 
     const cost = visionCost(message.usage)
-    const spent = cost == null ? '' : ` (${cost < 0.01 ? '<1' : Math.round(cost * 100)}\u00a2)`
+    if (cost != null) shotSpent += cost
+    const spent = shotSpent === 0 ? ''
+      : ` (${shotSpent < 0.01 ? '<1' : Math.round(shotSpent * 100)}\u00a2${images.length > 1 ? ` for ${images.length} photos` : ''})`
     say(shotPicks.length === 0
       ? `Nothing on today\u2019s menu matched that photo${spent}. Log it by name below.`
       : `${shotPicks.length} dish${shotPicks.length === 1 ? '' : 'es'} recognised${spent}. Nothing is logged until you tap Log.`)
@@ -1419,7 +1447,9 @@ async function identifyTray(file) {
 function renderShotPicks() {
   const box = $('#shotpicks')
   box.innerHTML = ''
-  if (shotPicks.length === 0) return
+  // Not `if (!shotPicks.length) return` any more: a photo that recognised nothing can still
+  // be a photo that asks for a better angle, and that offer is the whole point of asking.
+  if (shotPicks.length === 0 && !shotAsk) return
 
   for (const [i, pick] of shotPicks.entries()) {
     const row = document.createElement('div')
@@ -1476,6 +1506,49 @@ function renderShotPicks() {
       + 'is on the plate. A photo cannot measure a loose pile; the stepper can.'))
   }
 
+  renderShotAsk(box)
+}
+
+/**
+ * The offer of another angle.
+ *
+ * A second view is the only accuracy lever a single phone camera has, and it is the model —
+ * not a rule here — that says whether one would change an answer, because only the model
+ * knows which pile it could not read. What it may say is limited to five shots this app has
+ * copy for, so the sentence on the screen is written here and only *chosen* over there.
+ *
+ * It is an offer and never a requirement. Every row below already carries a stepper, so the
+ * cheapest fix for a wrong amount stays a thumb; the extra photo is for the case where he
+ * does not know the right amount either.
+ */
+function renderShotAsk(box) {
+  if (!shotAsk) return
+  const copy = ANGLE_COPY[shotAsk.shot]
+  if (!copy) return
+
+  const names = shotAsk.dishes.map((d) => d.name)
+  const settles = names.length === 0 ? ''
+    : ` It would settle ${names.length === 1 ? names[0]
+      : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`}.`
+
+  const note = noteBlock('aside', 'Another angle would help',
+    `${copy.why}${settles} This would be photo ${shotImages.length + 1} of ${MAX_IMAGES} of the `
+    + 'same tray — it is sent together with the ones already taken, and costs about another '
+    + 'two cents. The rows above stay as they are until it comes back.')
+
+  const add = document.createElement('button')
+  add.className = 'primary'
+  add.textContent = copy.button
+  add.onclick = () => { shotAppend = true; $('#shot').click() }
+  note.append(add)
+
+  const enough = document.createElement('button')
+  enough.className = 'ghost'
+  enough.textContent = 'No, this is enough'
+  enough.onclick = () => { shotAsk = null; renderShotPicks() }
+  note.append(enough)
+
+  box.append(note)
 }
 
 // The honest half of the micronutrient promise: Cronometer knows about these, and the
@@ -1783,7 +1856,11 @@ $('#shot').onchange = (e) => {
   // Cleared straight away so the same photo can be retaken and re-sent: a file input holding
   // the same file fires no change event the second time.
   e.target.value = ''
-  if (file) identifyTray(file)
+  // Read and reset here rather than inside identifyTray: a cancelled picker fires no change
+  // event at all, and a flag left standing would turn the next new tray into an added angle.
+  const append = shotAppend
+  shotAppend = false
+  if (file) identifyTray(file, append)
 }
 
 $('#addkey').onsubmit = (e) => {
@@ -1807,6 +1884,9 @@ $('#forgetkey').onclick = () => {
   if (!confirm('Remove the API key from this phone? The tray photo stops working until you paste it back.')) return
   localStorage.removeItem(VISION_KEY)
   shotPicks = []
+  shotImages = []
+  shotAsk = null
+  shotSpent = 0
   renderKeyStatus()
   renderShot()
   renderShotPicks()

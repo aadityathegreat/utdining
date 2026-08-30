@@ -57,6 +57,48 @@ export const IMAGE_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'imag
  *  a bad day, and every extra row is one more thing to check by hand. */
 export const MAX_PICKS = 12
 
+/**
+ * How many photos of one tray may go in a single request.
+ *
+ * A second view is the only accuracy lever available that costs nothing but a shutter tap:
+ * a photo from above flattens a pile into a disc, and the same pile seen at eye level has a
+ * height. It does not make the answer metric — nothing in the frame is of known size — but it
+ * moves an amorphous pile from a guess to a comparison, which is exactly the rung of accuracy
+ * the five-serving ladder was chosen for.
+ *
+ * Three, because each extra image is another ~1.5k input tokens and another upload on basement
+ * WiFi, and because the marginal view after the third settles nothing a stepper cannot.
+ */
+export const MAX_IMAGES = 3
+
+/**
+ * The views the model may ask for. An enum, not free text, for the same reason the dish comes
+ * back as a line number: what the screen says is written here, and the model only chooses
+ * which of these sentences is shown. A model that could type its own instruction could type
+ * a gram figure into it.
+ */
+export const ANGLE_SHOTS = ['none', 'side', 'closer', 'angled', 'top']
+
+/** What the app says when each is asked for. `none` has no copy because nothing is shown. */
+export const ANGLE_COPY = {
+  side: {
+    button: 'Add a side-on photo',
+    why: 'From above a pile is a disc. From the side, at eye level, it has a height.',
+  },
+  closer: {
+    button: 'Add a close-up photo',
+    why: 'One dish filling the frame is easier to read than the same dish in a corner of the tray.',
+  },
+  angled: {
+    button: 'Add an angled photo',
+    why: 'About 45\u00b0 across the tray shows both the surface and the depth of what is on it.',
+  },
+  top: {
+    button: 'Add a top-down photo',
+    why: 'Straight down over the tray shows how much of each plate is covered.',
+  },
+}
+
 export class VisionError extends Error {}
 
 /**
@@ -119,13 +161,38 @@ export const VISION_SYSTEM = [
   '  a guess, it is not high.',
   '- An empty list is a valid answer. Guessing to fill the plate is worse than returning',
   '  nothing.',
+  '- If a different view of the same tray would settle an amount you could not judge, ask for',
+  '  one in "another": "side" for eye level from the side, "closer" for one dish filling the',
+  '  frame, "angled" for about 45 degrees across the tray, "top" for straight down. Name the',
+  '  list numbers it would settle. Answer "none" when what you have is enough \u2014 asking costs',
+  '  another photo and another request, so ask only when the extra view would change an answer.',
+  '- When you are given several photos they are the SAME tray from different angles. A dish',
+  '  visible in more than one of them is one dish and is listed once.',
 ].join('\n')
 
 export const VISION_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['picks'],
+  required: ['picks', 'another'],
   properties: {
+    another: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['shot', 'lines'],
+      properties: {
+        shot: {
+          type: 'string',
+          enum: ANGLE_SHOTS,
+          description: 'A further view of the same tray that would settle an amount you were '
+            + 'unsure of, or "none" if what you were given was enough.',
+        },
+        lines: {
+          type: 'array',
+          items: { type: 'integer' },
+          description: 'The list numbers that further view would settle.',
+        },
+      },
+    },
     picks: {
       type: 'array',
       items: {
@@ -150,8 +217,16 @@ export const VISION_SCHEMA = {
 }
 
 /**
- * The request body. The image goes before the text: Claude reads an image-then-text turn
- * better than the other way round, and the candidate list is long.
+ * The request body.
+ *
+ * `image` is one image or an array of them: the same tray, photographed from different
+ * angles, which is the one accuracy lever a single camera has. Each is labelled in a text
+ * block before it, and the closing text says outright that they are one tray, because the
+ * failure mode of several photos is double-counting \u2014 a dish seen twice logged twice is a
+ * worse answer than the single photo would have given.
+ *
+ * The image goes before the text: Claude reads an image-then-text turn better than the other
+ * way round, and the candidate list is long.
  *
  * `output_config.format` replaces the old trick of prefilling an assistant turn with `{` \u2014
  * prefills are rejected outright on this model family, and a schema is a stronger guarantee
@@ -159,10 +234,39 @@ export const VISION_SCHEMA = {
  */
 export function visionBody(candidates, image) {
   if (!candidates?.length) throw new VisionError('No menu for today to match the photo against.')
-  if (!image?.data) throw new VisionError('No image to send.')
-  if (!IMAGE_MEDIA_TYPES.includes(image.mediaType)) {
-    throw new VisionError(`${image.mediaType} is not an image Claude can read.`)
+
+  const images = (Array.isArray(image) ? image : [image]).filter(Boolean)
+  if (!images.length) throw new VisionError('No image to send.')
+  if (images.length > MAX_IMAGES) {
+    throw new VisionError(`One tray is at most ${MAX_IMAGES} photos.`)
   }
+  for (const img of images) {
+    if (!img?.data) throw new VisionError('No image to send.')
+    if (!IMAGE_MEDIA_TYPES.includes(img.mediaType)) {
+      throw new VisionError(`${img.mediaType} is not an image Claude can read.`)
+    }
+  }
+
+  const content = []
+  for (const [i, img] of images.entries()) {
+    // Unlabelled when there is only one: a lone "Photo 1 of 1:" is noise, and the single-image
+    // request is still the common one.
+    if (images.length > 1) content.push({ type: 'text', text: `Photo ${i + 1} of ${images.length}:` })
+    content.push({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mediaType, data: img.data },
+    })
+  }
+  content.push({
+    type: 'text',
+    text: `Today's menu at this hall:\n\n${candidateLines(candidates)}\n\n`
+      + (images.length > 1
+        ? `The ${images.length} photos above are the same tray from different angles. A dish `
+          + 'that appears in more than one of them is one dish and is listed once. Use the '
+          + 'extra views to settle amounts a single angle could not.\n\n'
+        : '')
+      + 'Which of these are on the plate, and how many servings of each?',
+  })
 
   return {
     model: VISION_MODEL,
@@ -174,20 +278,7 @@ export function visionBody(candidates, image) {
       format: { type: 'json_schema', schema: VISION_SCHEMA },
     },
     system: VISION_SYSTEM,
-    messages: [{
-      role: 'user',
-      content: [
-        {
-          type: 'image',
-          source: { type: 'base64', media_type: image.mediaType, data: image.data },
-        },
-        {
-          type: 'text',
-          text: `Today's menu at this hall:\n\n${candidateLines(candidates)}\n\n` +
-            'Which of these are on the plate, and how many servings of each?',
-        },
-      ],
-    }],
+    messages: [{ role: 'user', content }],
   }
 }
 
@@ -267,13 +358,46 @@ export function readVisionPicks(data, candidates) {
 }
 
 /**
- * The message from the API down to validated rows.
+ * The request for another angle, if there was one and if another photo is still allowed.
+ *
+ * Whitelisted the same way the picks are: the shot kind has to be one of the five this app
+ * has copy for, and the dishes it would settle are rebuilt from the candidate list rather
+ * than read out of the answer. So the screen never shows a sentence the model wrote, only a
+ * sentence the model chose.
+ *
+ * `sent` is how many photos this tray has already cost. At the ceiling the ask is dropped
+ * rather than shown and refused \u2014 an offer that cannot be taken is worse than no offer.
+ */
+export function readAngleRequest(data, candidates, sent = 1) {
+  const shot = data?.another?.shot
+  if (!ANGLE_SHOTS.includes(shot) || shot === 'none') return null
+  if (sent >= MAX_IMAGES) return null
+
+  const dishes = []
+  const seen = new Set()
+  for (const n of Array.isArray(data?.another?.lines) ? data.another.lines : []) {
+    const line = Number(n)
+    if (!Number.isInteger(line) || line < 1 || line > candidates.length) continue
+    const candidate = candidates[line - 1]
+    if (seen.has(candidate.itemId)) continue
+    seen.add(candidate.itemId)
+    dishes.push({ itemId: candidate.itemId, name: candidate.name })
+    if (dishes.length >= MAX_PICKS) break
+  }
+  return { shot, dishes }
+}
+
+/**
+ * The message from the API down to validated rows, plus any request for another angle.
+ *
+ * Returns `{ picks, another }`: `picks` is what to show, `another` is `null` or a view the
+ * model would like before it commits to an amount.
  *
  * Structured output still arrives as text in a content block, so it is parsed rather than
  * read off a field — and parsed with `JSON.parse`, never matched with a regular expression:
  * this model family varies its string escaping.
  */
-export function readVisionMessage(message, candidates) {
+export function readVisionMessage(message, candidates, sent = 1) {
   if (message?.type === 'error') {
     throw new VisionError(message.error?.message ?? 'The API refused the request.')
   }
@@ -298,7 +422,10 @@ export function readVisionMessage(message, candidates) {
   } catch {
     throw new VisionError('The API sent something that was not the expected answer.')
   }
-  return readVisionPicks(data, candidates)
+  return {
+    picks: readVisionPicks(data, candidates),
+    another: readAngleRequest(data, candidates, sent),
+  }
 }
 
 /** What one photo cost, in dollars, if the response says. Shown rather than hidden: it is

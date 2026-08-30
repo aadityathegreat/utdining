@@ -2,8 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   visionCandidates, candidateLines, visionBody, visionHeaders, visionCost,
-  readVisionPicks, readVisionMessage, snapToLadder, looksLikeApiKey,
-  SERVING_LADDER, MAX_PICKS, VISION_MODEL, VISION_SCHEMA, VisionError,
+  readVisionPicks, readVisionMessage, readAngleRequest, snapToLadder, looksLikeApiKey,
+  SERVING_LADDER, MAX_PICKS, MAX_IMAGES, ANGLE_SHOTS, ANGLE_COPY, VISION_MODEL, VISION_SCHEMA,
+  VisionError,
 } from '../vision.mjs'
 
 const portion = (raw, over = {}) => ({ raw, qty: 3, unit: 'oz', unitClass: 'weight', grams: 85, ...over })
@@ -195,7 +196,7 @@ const message = (text, over = {}) => ({
 })
 
 test('the JSON is read out of the content block', () => {
-  const picks = readVisionMessage(
+  const { picks } = readVisionMessage(
     message('{"picks":[{"line":3,"servings":1.5,"confidence":"medium"}]}'), cands())
   assert.equal(picks[0].name, 'Tortilla Soup')
   assert.equal(picks[0].servings, 1.5)
@@ -205,7 +206,7 @@ test('a thinking block before the answer does not confuse the parse', () => {
   const msg = message('{"picks":[]}', {
     content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: '{"picks":[]}' }],
   })
-  assert.deepEqual(readVisionMessage(msg, cands()), [])
+  assert.deepEqual(readVisionMessage(msg, cands()), { picks: [], another: null })
 })
 
 test('an error, a refusal and a cut-off answer each say what happened', () => {
@@ -220,4 +221,65 @@ test('an error, a refusal and a cut-off answer each say what happened', () => {
 test('the cost of a shot is reported from what the API charged, not guessed', () => {
   assert.equal(visionCost({ input_tokens: 2000, output_tokens: 200 }).toFixed(4), '0.0150')
   assert.equal(visionCost(null), null)
+})
+
+// ---------------------------------------------------------------------------
+// Several angles of one tray
+// ---------------------------------------------------------------------------
+
+const img = (data = 'AAAA') => ({ mediaType: 'image/jpeg', data })
+
+test('one image still sends exactly the request it always did', () => {
+  const body = visionBody(cands(), img())
+  assert.equal(body.messages[0].content.length, 2)
+  assert.equal(body.messages[0].content[0].type, 'image')
+  assert.equal(/Photo 1 of/.test(body.messages[0].content[1].text), false)
+})
+
+test('several angles are labelled, and the text says they are one tray', () => {
+  const body = visionBody(cands(), [img('A'), img('B')])
+  const kinds = body.messages[0].content.map((c) => c.type)
+  assert.deepEqual(kinds, ['text', 'image', 'text', 'image', 'text'])
+  assert.match(body.messages[0].content[0].text, /Photo 1 of 2/)
+  assert.match(body.messages[0].content[2].text, /Photo 2 of 2/)
+  // The failure mode of two photos is one dish logged twice. It has to be said outright.
+  assert.match(body.messages[0].content[4].text, /same tray/)
+  assert.match(body.messages[0].content[4].text, /one dish and is listed once/)
+})
+
+test('a fourth angle is refused rather than quietly dropped', () => {
+  assert.throws(() => visionBody(cands(), [img(), img(), img(), img()]), VisionError)
+  assert.throws(() => visionBody(cands(), []), VisionError)
+  assert.throws(() => visionBody(cands(), [img(), { mediaType: 'image/heic', data: 'A' }]), VisionError)
+})
+
+test('the request for another angle is a choice from a fixed set, never a sentence', () => {
+  // The schema can only carry one of five words, and the copy for each lives in this app.
+  assert.deepEqual(VISION_SCHEMA.properties.another.properties.shot.enum, ANGLE_SHOTS)
+  assert.equal(VISION_SCHEMA.properties.another.additionalProperties, false)
+  for (const shot of ANGLE_SHOTS.filter((x) => x !== 'none')) {
+    assert.equal(typeof ANGLE_COPY[shot].why, 'string')
+    assert.equal(typeof ANGLE_COPY[shot].button, 'string')
+  }
+})
+
+test('the dishes an angle would settle are rebuilt from the menu, not read out of the answer', () => {
+  const ask = readAngleRequest(
+    { another: { shot: 'side', lines: [1, 99, 1, 3] } }, cands(), 1)
+  assert.equal(ask.shot, 'side')
+  assert.deepEqual(ask.dishes.map((d) => d.name), ['Beans de Charro', 'Tortilla Soup'])
+})
+
+test('"none", an unknown shot, and a tray already at the ceiling all ask for nothing', () => {
+  assert.equal(readAngleRequest({ another: { shot: 'none', lines: [1] } }, cands(), 1), null)
+  assert.equal(readAngleRequest({ another: { shot: 'from below', lines: [1] } }, cands(), 1), null)
+  assert.equal(readAngleRequest({ another: { shot: 'side', lines: [1] } }, cands(), MAX_IMAGES), null)
+  assert.equal(readAngleRequest({}, cands(), 1), null)
+})
+
+test('an angle can be asked for with no dishes named, and with nothing recognised', () => {
+  const answer = readVisionMessage(
+    message('{"picks":[],"another":{"shot":"closer","lines":[]}}'), cands(), 1)
+  assert.deepEqual(answer.picks, [])
+  assert.deepEqual(answer.another, { shot: 'closer', dishes: [] })
 })
